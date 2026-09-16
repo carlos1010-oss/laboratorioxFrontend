@@ -1,2 +1,2 @@
 # laboratorio
-Este es un Ingreso de usuarios con autenticacion para diferentes areas 
+Aqui estara alojado solamente el codigo frontend para ser visualizado en vercel
