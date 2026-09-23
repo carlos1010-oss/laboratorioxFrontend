@@ -114,7 +114,6 @@ export default function CatalogosPage() {
       id: 0, // Se autogenera en el store
       departamentoId: parseInt(deptoId),
       departamentoNombre: deptoObj?.nombre,
-      areaPrincipalId: parseInt(areaId),
       areaPrincipalNombre: areaObj?.nombre,
       areasAutorizadas: areaObj ? [areaObj.nombre] : [],
       tipoDocumento: tipoDocumento,

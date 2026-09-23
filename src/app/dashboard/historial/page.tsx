@@ -68,15 +68,15 @@ export default function HistorialAccesosPage() {
     const coincideTexto =
       !texto ||
       (item.numeroDocumentoIngresado && item.numeroDocumentoIngresado.toLowerCase().includes(texto)) ||
-      (item.codigoTarjetaIngresado && item.codigoTarjetaIngresado.toLowerCase().includes(texto)) ||
-      (item.empleadoNombreCompleto && item.empleadoNombreCompleto.toLowerCase().includes(texto)) ||
-      (item.areaNombre && item.areaNombre.toLowerCase().includes(texto));
+      (item.codigoTarjetaRfid && item.codigoTarjetaRfid.toLowerCase().includes(texto)) ||
+      (item.nombreEmpleado && item.nombreEmpleado.toLowerCase().includes(texto)) ||
+      (item.nombreArea && item.nombreArea.toLowerCase().includes(texto));
 
-    const coincideEstado = filtroResultado === 'TODOS' || item.resultadoAcceso === filtroResultado;
+    const coincideEstado = filtroResultado === 'TODOS' || item.resultado === filtroResultado;
 
     let coincideFechas = true;
-    if (item.timestamp) {
-      const fechaItem = new Date(item.timestamp);
+    if (item.fechaHora) {
+      const fechaItem = new Date(item.fechaHora);
       if (fechaInicio) {
         coincideFechas = coincideFechas && fechaItem >= new Date(`${fechaInicio}T00:00:00`);
       }
@@ -96,7 +96,7 @@ export default function HistorialAccesosPage() {
 
     let csv = 'ID_UNICO,TIMESTAMP_UTC,DOCUMENTO,CODIGO_RFID,PERSONA,AREA,RESULTADO,MOTIVO_DETALLE\n';
     filtrados.forEach((row) => {
-      csv += `"${row.id}","${row.timestamp}","${row.numeroDocumentoIngresado || ''}","${row.codigoTarjetaIngresado || ''}","${row.empleadoNombreCompleto || 'NO REGISTRADO'}","${row.areaNombre || ''}","${row.resultadoAcceso}","${(row.motivoDenegacion || 'Acceso correcto verificado').replace(/"/g, '""')}"\n`;
+      csv += `"${row.idHistorial}","${row.fechaHora}","${row.numeroDocumentoIngresado || ''}","${row.codigoTarjetaRfid || ''}","${row.nombreEmpleado || 'NO REGISTRADO'}","${row.nombreArea || ''}","${row.resultado}","${(row.motivo || 'Acceso correcto verificado').replace(/"/g, '""')}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -129,12 +129,12 @@ export default function HistorialAccesosPage() {
     
     filtrados.forEach(item => {
       const rowData = [
-        new Date(item.timestamp).toLocaleString(),
-        item.numeroDocumentoIngresado || item.codigoTarjetaIngresado || '-',
-        item.empleadoNombreCompleto || 'NO REGISTRADO',
-        item.areaNombre || '-',
-        item.resultadoAcceso,
-        item.motivoDenegacion || 'OK'
+        new Date(item.fechaHora).toLocaleString(),
+        item.numeroDocumentoIngresado || item.codigoTarjetaRfid || '-',
+        item.nombreEmpleado || 'NO REGISTRADO',
+        item.nombreArea || '-',
+        item.resultado,
+        item.motivo || 'OK'
       ];
       tableRows.push(rowData);
     });
@@ -321,7 +321,7 @@ export default function HistorialAccesosPage() {
                 <AnimatePresence>
                   {filtrados.map((item, idx) => (
                     <motion.tr 
-                      key={item.id} 
+                      key={item.idHistorial} 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95 }}
@@ -329,40 +329,40 @@ export default function HistorialAccesosPage() {
                       className="hover:bg-slate-50/80 transition-colors group relative"
                     >
                       <td className="p-4 font-mono text-[11px] text-slate-500/80 whitespace-nowrap">
-                        {new Date(item.timestamp).toLocaleString()}
+                        {new Date(item.fechaHora).toLocaleString()}
                       </td>
                       <td className="p-4 whitespace-nowrap">
                         <p className="font-mono font-bold text-slate-800">{item.numeroDocumentoIngresado || '—'}</p>
-                        {item.codigoTarjetaIngresado && (
+                        {item.codigoTarjetaRfid && (
                           <span className="text-[10px] text-emerald-600 font-mono block">
-                            {item.codigoTarjetaIngresado}
+                            {item.codigoTarjetaRfid}
                           </span>
                         )}
                       </td>
                       <td className="p-4 font-semibold text-slate-800">
-                        {item.empleadoNombreCompleto || (
+                        {item.nombreEmpleado || (
                           <span className="text-gray-400 italic">No empadronado</span>
                         )}
                       </td>
-                      <td className="p-4 text-slate-500 font-medium">{item.areaNombre}</td>
+                      <td className="p-4 text-slate-500 font-medium">{item.nombreArea}</td>
                       <td className="p-4 whitespace-nowrap">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold shadow-sm ${
-                            item.resultadoAcceso === 'AUTORIZADO'
+                            item.resultado === 'AUTORIZADO'
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : item.resultadoAcceso === 'DENEGADO'
+                              : item.resultado === 'DENEGADO'
                               ? 'bg-red-100 text-red-800 border border-red-200'
                               : 'bg-amber-100 text-amber-800 border border-amber-200'
                           }`}
                         >
-                          {item.resultadoAcceso === 'AUTORIZADO' && <CheckCircle className="w-3 h-3" />}
-                          {item.resultadoAcceso === 'DENEGADO' && <XCircle className="w-3 h-3" />}
-                          {item.resultadoAcceso === 'NO_REGISTRADO' && <AlertCircle className="w-3 h-3" />}
-                          {item.resultadoAcceso}
+                          {item.resultado === 'AUTORIZADO' && <CheckCircle className="w-3 h-3" />}
+                          {item.resultado === 'DENEGADO' && <XCircle className="w-3 h-3" />}
+                          {item.resultado === 'NO_REGISTRADO' && <AlertCircle className="w-3 h-3" />}
+                          {item.resultado}
                         </span>
                       </td>
                       <td className="p-4 text-slate-500/70 text-[11px] max-w-xs break-words">
-                        {item.motivoDenegacion || 'Acceso concedido exitosamente'}
+                        {item.motivo || 'Acceso concedido exitosamente'}
                       </td>
                     </motion.tr>
                   ))}

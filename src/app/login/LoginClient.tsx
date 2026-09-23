@@ -3,9 +3,8 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { api } from '@/lib/api';
-import { getUsuariosSistema } from '@/lib/usuariosStore';
-import { Lock, Mail, AlertTriangle, KeyRound, ArrowLeft, ShieldAlert, Eye, EyeOff, Loader2, CheckCheck } from 'lucide-react';
+import { api, extraerMensajeError } from '@/lib/api';
+import { Lock, Mail, AlertTriangle, KeyRound, ArrowLeft, ShieldAlert, Eye, EyeOff, Loader2, CheckCheck, Fingerprint } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -13,7 +12,7 @@ function LoginFormContent() {
   const searchParams = useSearchParams();
   const errorParam = searchParams?.get('error');
 
-  const [correo, setCorreo] = useState('');
+  const [documento, setDocumento] = useState('');
   const [password, setPassword] = useState('');
   const [intentosFallidos, setIntentosFallidos] = useState(0);
   const [isBloqueado, setIsBloqueado] = useState(false);
@@ -43,27 +42,12 @@ function LoginFormContent() {
     }
   }, [isAuthenticated, router]);
 
-  // Usuarios Demo
-  const usuariosDemo: Record<string, { pass: string; user: any }> = {
-    'admin@laboratorioxyz.com': {
-      pass: 'Admin123!',
-      user: { id: 1, documento: '10001234', nombres: 'Dr. Roberto', apellidos: 'Gomez', correo: 'admin@laboratorioxyz.com', rol: 'ADMINISTRADOR', estado: 'ACTIVO' },
-    },
-    'gestor@laboratorioxyz.com': {
-      pass: 'Admin123!',
-      user: { id: 2, documento: '10002345', nombres: 'Maria Fernanda', apellidos: 'Londono', correo: 'gestor@laboratorioxyz.com', rol: 'GESTOR_PERSONAL', estado: 'ACTIVO' },
-    },
-    'supervisor@laboratorioxyz.com': {
-      pass: 'Admin123!',
-      user: { id: 3, documento: '10003456', nombres: 'Ing. Alejandro', apellidos: 'Torres', correo: 'supervisor@laboratorioxyz.com', rol: 'SUPERVISOR_ACCESOS', estado: 'ACTIVO' },
-    },
-  };
-
   const triggerShake = () => {
     setIsShaking(true);
     setTimeout(() => setIsShaking(false), 500);
   };
 
+  // Autenticación 100% contra el backend: POST /api/auth/login { documento, password }
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isBloqueado) {
@@ -75,41 +59,22 @@ function LoginFormContent() {
     setErrorMsg('');
 
     try {
-      // Intentar con el backend real (Spring Boot)
-      const res = await api.post('/auth/login', { correo, password });
-      const usuarioBackend = {
-        id: res.data.usuario.id,
-        documento: res.data.usuario.documento,
-        nombres: res.data.usuario.nombres,
-        apellidos: res.data.usuario.apellidos,
-        correo: res.data.usuario.correo,
-        rol: res.data.usuario.rol,
-        estado: res.data.usuario.estado,
-      };
-      login(res.data.token, usuarioBackend);
+      const res = await api.post('/auth/login', { documento, password });
+      const u = res.data.usuario;
+      login(
+        res.data.token,
+        {
+          id: u.id,
+          documento: u.documento,
+          nombres: u.nombres,
+          apellidos: u.apellidos,
+          correo: u.correo,
+          rol: u.rol,
+          estado: u.estado,
+        }
+      );
       router.replace('/dashboard/simulador');
-    } catch (err: any) {
-      // Fallback demo cuando el backend no está disponible
-      const demoAccount = usuariosDemo[correo.toLowerCase()];
-
-      if (demoAccount && password === demoAccount.pass) {
-        login(`mock_jwt_${demoAccount.user.rol.toLowerCase()}`, demoAccount.user);
-        router.replace('/dashboard/simulador');
-        return;
-      }
-
-      // 2. Fallback a usuarios registrados localmente en simulador
-      const usuariosLocales = getUsuariosSistema();
-      const localUser = usuariosLocales.find(u => u.correo.toLowerCase() === correo.toLowerCase());
-      
-      if (localUser && localUser.mockPass === password) {
-        const { mockPass, ...userSinPass } = localUser;
-        login(`mock_jwt_${localUser.rol.toLowerCase()}`, userSinPass);
-        router.replace('/dashboard/simulador');
-        return;
-      }
-
-      // Conteo de intentos fallidos
+    } catch (err) {
       const nuevosIntentos = intentosFallidos + 1;
       setIntentosFallidos(nuevosIntentos);
       triggerShake();
@@ -118,27 +83,7 @@ function LoginFormContent() {
         setIsBloqueado(true);
         setErrorMsg('Cuenta BLOQUEADA por seguridad tras 3 intentos fallidos consecutivos. Contacte a Soporte.');
       } else {
-        setErrorMsg(`Credenciales incorrectas. Intento ${nuevosIntentos} de 3 permitidos.`);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Login directo para simulación sin rellenar campos por privacidad
-  const handleDemoLoginDirecto = async (correoDemo: string) => {
-    if (loading || !correoDemo) return;
-    setLoading(true);
-    setErrorMsg('');
-    setIsBloqueado(false);
-
-    try {
-      const demoAccount = usuariosDemo[correoDemo.toLowerCase()];
-      if (demoAccount) {
-        // Pequeño delay visual
-        await new Promise(r => setTimeout(r, 600));
-        login(`mock_jwt_${demoAccount.user.rol.toLowerCase()}`, demoAccount.user);
-        router.replace('/dashboard/simulador');
+        setErrorMsg(extraerMensajeError(err, 'Credenciales incorrectas. Intente nuevamente.'));
       }
     } finally {
       setLoading(false);
@@ -273,8 +218,8 @@ function LoginFormContent() {
                 type="text"
                 required
                 disabled={isBloqueado || loading}
-                value={correo}
-                onChange={(e) => setCorreo(e.target.value)}
+                value={documento}
+                onChange={(e) => setDocumento(e.target.value)}
                 placeholder=" "
                 autoComplete="off"
                 data-1p-ignore="true"
@@ -286,10 +231,10 @@ function LoginFormContent() {
                 htmlFor="auth_identifier"
                 className="absolute left-4 top-2 text-[10px] uppercase tracking-wider text-slate-400 transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:top-4 peer-placeholder-shown:text-slate-500 peer-focus:top-2 peer-focus:text-[10px] peer-focus:text-emerald-600 font-bold pointer-events-none"
               >
-                Correo
+                Documento
               </label>
               <div className="absolute right-4 top-4 text-slate-300 peer-focus:text-emerald-500 transition-colors">
-                <Mail className="w-5 h-5" />
+                <Fingerprint className="w-5 h-5 text-slate-300" />
               </div>
             </div>
 
@@ -304,7 +249,7 @@ function LoginFormContent() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder=" "
-                maxLength={18}
+                maxLength={72}
                 autoComplete="new-password"
                 data-1p-ignore="true"
                 data-lpignore="true"

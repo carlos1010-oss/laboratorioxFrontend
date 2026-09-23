@@ -17,12 +17,10 @@ import {
   Database,
 } from 'lucide-react';
 import Link from 'next/link';
-
-interface ErrorFila {
-  linea: number;
-  documento: string;
-  error: string;
-}
+import { api, extraerMensajeError } from '@/lib/api';
+import { useNotifications } from '@/context/NotificationContext';
+import { toast } from 'sonner';
+import { ImportacionResultado } from '@/types';
 
 export default function CargaMasivaPage() {
   const [dragActive, setDragActive] = useState(false);
@@ -35,13 +33,11 @@ export default function CargaMasivaPage() {
   const [alertaExito, setAlertaExito] = useState(false);
   const [alertaError, setAlertaError] = useState(false);
 
-  const [resultado, setResultado] = useState<{
-    total: number;
-    exitosos: number;
-    fallidos: number;
-    errores: ErrorFila[];
-    loteId: string;
-  } | null>(null);
+  const [resultado, setResultado] = useState<
+    (ImportacionResultado & { loteId: string }) | null
+  >(null);
+
+  const { agregarNotificacion } = useNotifications();
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -76,6 +72,9 @@ export default function CargaMasivaPage() {
   const handleProcesar = async () => {
     if (!file) return;
     setProcesando(true);
+    setResultado(null);
+    setAlertaExito(false);
+    setAlertaError(false);
     setProgreso(15);
     setPasoTexto('Validando sintaxis y encabezados de columnas CSV...');
 
@@ -89,26 +88,64 @@ export default function CargaMasivaPage() {
       setPasoTexto('Insertando registros aprobados y generando bitácora...');
     }, 1200);
 
-    setTimeout(() => {
-      setProgreso(100);
-      setProcesando(false);
-      
-      const res = {
-        loteId: `BATCH-${Date.now().toString().slice(-6)}`,
-        total: 48,
-        exitosos: 45,
-        fallidos: 3,
-        errores: [
-          { linea: 12, documento: '10988776', error: 'Departamento "Logística Inversa" no existe en catálogo oficial' },
-          { linea: 27, documento: '1012345678', error: 'Documento ya registrado previamente en base de datos (Duplicado)' },
-          { linea: 41, documento: '55443322', error: 'Formato de correo electrónico institucional inválido' },
-        ],
-      };
+    try {
+      const form = new FormData();
+      form.append('archivo', file);
 
-      setResultado(res);
+      const { data } = await api.post<ImportacionResultado>(
+        '/personal/empleados/importar-csv',
+        form,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+
+      const loteId = `BATCH-${Date.now().toString().slice(-6)}`;
+
+      setProgreso(100);
+      setPasoTexto('Carga masiva finalizada con éxito.');
+      setResultado({ ...data, loteId });
       setAlertaExito(true);
-      setAlertaError(true);
-    }, 1800);
+      setAlertaError(data.fallidos > 0);
+
+      if (data.fallidos > 0) {
+        toast.success(
+          `Se importaron ${data.exitosos} de ${data.totalProcesados} empleados, con ${data.fallidos} rechazados.`
+        );
+      } else {
+        toast.success(`Carga masiva completada: ${data.exitosos} empleados importados correctamente.`);
+      }
+
+      agregarNotificacion({
+        titulo: '📊 Carga Masiva de Personal Procesada',
+        mensaje: `Lote ${loteId} importó ${data.exitosos} empleados con éxito${
+          data.fallidos > 0 ? ` y ${data.fallidos} rechazados.` : '.'
+        }`,
+        tipo: 'PERSONAL',
+        rolesDestino: ['ADMINISTRADOR', 'GESTOR_PERSONAL'],
+        accionUrl: '/dashboard/carga-masiva',
+        detallesAuditoria: {
+          evento: 'Importación Masiva de Personal',
+          modulo: 'Gestión de Personal',
+          operacion: 'CARGA_MASIVA',
+          entidadInvolucrada: `Lote ${loteId}`,
+          valorNuevo: `{"exitosos": ${data.exitosos}, "fallidos": ${data.fallidos}}`,
+          resultado: data.fallidos > 0 ? 'COMPLETADO CON OBSERVACIONES' : 'EXITOSO',
+        },
+      });
+    } catch (err) {
+      setProgreso(0);
+      setPasoTexto('');
+      const msg = extraerMensajeError(err, 'No fue posible procesar el archivo CSV.');
+      toast.error(msg);
+      agregarNotificacion({
+        titulo: '⚠️ Fallo en Carga Masiva de Personal',
+        mensaje: msg,
+        tipo: 'PERSONAL',
+        rolesDestino: ['ADMINISTRADOR', 'GESTOR_PERSONAL'],
+        accionUrl: '/dashboard/carga-masiva',
+      });
+    } finally {
+      setProcesando(false);
+    }
   };
 
   const handleReiniciar = () => {
@@ -120,20 +157,25 @@ export default function CargaMasivaPage() {
     setPasoTexto('');
   };
 
-  const descargarPlantilla = () => {
-    const csvContent =
-      'tipo_documento,numero_documento,nombres,apellidos,correo,telefono,codigo_departamento,codigo_rfid\n' +
-      'CC,1020304050,Juan,Pérez Gómez,juan.perez@laboratorioxyz.com,+573001112233,PROD-01,RFID-901\n' +
-      'CE,99887766,Ana,Martínez,ana.martinez@laboratorioxyz.com,+573004445566,CAL-02,RFID-902\n';
+  const descargarPlantilla = async () => {
+    try {
+      const res = await api.get('/personal/empleados/plantilla-csv', { responseType: 'blob' });
+      const nombreMatch = /filename="?([^";]+)"?/.exec(res.headers['content-disposition'] || '');
+      const nombre = nombreMatch ? nombreMatch[1] : 'plantilla_empleados.csv';
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'plantilla_personal_zone_control.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      const url = URL.createObjectURL(res.data as Blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', nombre);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success('Plantilla CSV descargada correctamente.');
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible descargar la plantilla CSV.'));
+    }
   };
 
   return (
@@ -322,7 +364,9 @@ export default function CargaMasivaPage() {
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
               </div>
               <p className="text-3xl font-heading font-extrabold text-emerald-600 mt-1">
-                {((resultado.exitosos / resultado.total) * 100).toFixed(1)}%
+                {resultado.totalProcesados > 0
+                  ? ((resultado.exitosos / resultado.totalProcesados) * 100).toFixed(1)
+                  : '0.0'}%
               </p>
               <span className="text-[11px] text-slate-500/70 font-medium">Lote #{resultado.loteId}</span>
             </div>
@@ -343,19 +387,22 @@ export default function CargaMasivaPage() {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-red-50 text-red-900 font-bold">
                     <tr>
-                      <th className="p-3">Línea CSV</th>
-                      <th className="p-3">Documento</th>
-                      <th className="p-3">Motivo del Rechazo</th>
+                      <th className="p-3">Fila</th>
+                      <th className="p-3" colSpan={2}>Motivo del Rechazo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-red-100 bg-white">
-                    {resultado.errores.map((err, idx) => (
-                      <tr key={idx} className="hover:bg-red-50/40">
-                        <td className="p-3 font-mono font-bold text-red-700">Fila #{err.linea}</td>
-                        <td className="p-3 font-mono font-semibold text-slate-800">{err.documento}</td>
-                        <td className="p-3 text-red-700 font-medium">{err.error}</td>
-                      </tr>
-                    ))}
+                    {resultado.errores.map((err, idx) => {
+                      const filaMatch = /fila\s+(\d+)/i.exec(err);
+                      return (
+                        <tr key={idx} className="hover:bg-red-50/40">
+                          <td className="p-3 font-mono font-bold text-red-700">
+                            {filaMatch ? `Fila #${filaMatch[1]}` : `Registro #${idx + 1}`}
+                          </td>
+                          <td className="p-3 text-red-700 font-medium" colSpan={2}>{err}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

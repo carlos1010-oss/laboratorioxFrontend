@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Empleado, EstadoEmpleado } from '@/types';
+import { Empleado, EstadoEmpleado, Departamento } from '@/types';
 import { useNotifications } from '@/context/NotificationContext';
-import { getEmpleados, saveEmpleados } from '@/lib/personalStore';
-import { api } from '@/lib/api';
-import { registrarAccesoLocal } from '@/lib/historialStore';
+import { api, extraerMensajeError } from '@/lib/api';
+import { toast } from 'sonner';
 import {
   Users,
   Search,
@@ -46,68 +45,48 @@ const catalogoLaboratoriosAreas: CatalogoAreaLab[] = [
   { id: 4, codigo: 'AREA-D', nombre: 'Oficinas Administrativas (Área D)', deptoAsociado: 'Administración y Finanzas', nivelRiesgo: 'BAJO' },
 ];
 
-const mockEmpleados: Empleado[] = [
-  {
-    id: 1,
-    departamentoId: 1,
-    departamentoNombre: 'Producción y Síntesis',
-    areaPrincipalId: 1,
-    areaPrincipalNombre: 'Laboratorio de Síntesis Molecular (Área A)',
-    areasAutorizadas: ['Laboratorio de Síntesis Molecular (Área A)', 'Sala Limpia de Liofilización (Área B)'],
-    tipoDocumento: 'CC',
-    numeroDocumento: '1012345678',
-    nombres: 'Carlos Andrés',
-    apellidos: 'Mendoza Pérez',
-    correo: 'carlos.mendoza@laboratorioxyz.com',
-    telefono: '3109988776',
-    codigoTarjetaRfid: 'RFID-001',
-    estado: 'ACTIVO',
-  },
-  {
-    id: 2,
-    departamentoId: 2,
-    departamentoNombre: 'Control de Calidad',
-    areaPrincipalId: 3,
-    areaPrincipalNombre: 'Almacén Central (Área C)',
-    areasAutorizadas: ['Almacén Central (Área C)'],
-    tipoDocumento: 'CC',
-    numeroDocumento: '1087654321',
-    nombres: 'Laura Sofía',
-    apellidos: 'Restrepo Villa',
-    correo: 'laura.restrepo@laboratorioxyz.com',
-    telefono: '3201123344',
-    codigoTarjetaRfid: 'RFID-002',
-    estado: 'REVOCADO',
-    motivoCambioEstado: 'Finalización de contrato temporal y auditoría de seguridad.',
-  },
-  {
-    id: 3,
-    departamentoId: 1,
-    departamentoNombre: 'Producción y Síntesis',
-    areaPrincipalId: 2,
-    areaPrincipalNombre: 'Sala Limpia de Liofilización e Inyectables (Área B)',
-    areasAutorizadas: ['Sala Limpia de Liofilización e Inyectables (Área B)'],
-    tipoDocumento: 'CE',
-    numeroDocumento: '98765432',
-    nombres: 'Guillermo',
-    apellidos: 'Von Hassen',
-    correo: 'guillermo.von@laboratorioxyz.com',
-    telefono: '3154432211',
-    codigoTarjetaRfid: 'RFID-003',
-    estado: 'SUSPENDIDO',
-    motivoCambioEstado: 'Incumplimiento de protocolo de esterilidad en esclusa.',
-  },
-];
-
 export default function GestionPersonalPage() {
   const [empleados, setEmpleados] = useState<Empleado[]>([]);
-
-  useEffect(() => {
-    setEmpleados(getEmpleados());
-  }, []);
+  const [deptosCatalogo, setDeptosCatalogo] = useState<Departamento[]>([]);
+  const [page, setPage] = useState(0);
+  const [totalElementos, setTotalElementos] = useState(0);
+  const [loadingLista, setLoadingLista] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [deptoFiltro, setDeptoFiltro] = useState('TODOS');
   const [areaFiltro, setAreaFiltro] = useState('TODAS');
+
+  const size = 12;
+
+  // Carga paginada y filtrada desde el backend (F-34)
+  const cargarEmpleados = useCallback(async () => {
+    setLoadingLista(true);
+    try {
+      const params: Record<string, string | number> = { page, size };
+      if (busqueda.trim() && /^\d+$/.test(busqueda.trim())) params.documento = busqueda.trim();
+      if (deptoFiltro !== 'TODOS') {
+        const depto = deptosCatalogo.find((d) => d.nombre === deptoFiltro);
+        if (depto) params.departamentoId = depto.id;
+      }
+      const res = await api.get('/personal/empleados', { params });
+      setEmpleados(res.data.content ?? []);
+      setTotalElementos(res.data.totalElements ?? 0);
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible cargar el padrón de personal.'));
+    } finally {
+      setLoadingLista(false);
+    }
+  }, [page, busqueda, deptoFiltro, deptosCatalogo]);
+
+  // Catálogo real de departamentos para filtros y el formulario
+  useEffect(() => {
+    api.get('/catalogos/departamentos')
+      .then((res) => setDeptosCatalogo(Array.isArray(res.data) ? res.data : []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    cargarEmpleados();
+  }, [cargarEmpleados]);
 
   // Modales
   const [showRegistrarModal, setShowRegistrarModal] = useState(false);
@@ -288,7 +267,7 @@ export default function GestionPersonalPage() {
     return coincideTexto && coincideDepto && coincideArea;
   });
 
-  const handleRegistrarEmpleado = (e: React.FormEvent) => {
+  const handleRegistrarEmpleado = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!nuevosNombres.trim() || !nuevosApellidos.trim()) {
@@ -312,19 +291,13 @@ export default function GestionPersonalPage() {
       return;
     }
 
-    const existe = empleados.some((emp) => emp.numeroDocumento === nuevoDoc);
-    if (existe) {
-      alert('Error: Ya existe un empleado registrado con este número de cédula.');
-      return;
-    }
-
-    const labObj = catalogoLaboratoriosAreas.find((l) => l.nombre === nuevoLaboratorioPrincipal);
+    const deptoObj = deptosCatalogo.find((d) => d.nombre === nuevoDepto);
+    const departamentoId = deptoObj?.id ?? 1;
 
     const nuevo: Empleado = {
       id: Date.now(),
-      departamentoId: nuevoDepto === 'Producción y Síntesis' ? 1 : nuevoDepto === 'Control de Calidad' ? 2 : 3,
+      departamentoId,
       departamentoNombre: nuevoDepto,
-      areaPrincipalId: labObj ? labObj.id : 1,
       areaPrincipalNombre: nuevoLaboratorioPrincipal,
       areasAutorizadas: areasPermitidas.length > 0 ? areasPermitidas : [nuevoLaboratorioPrincipal],
       tipoDocumento: nuevoTipoDoc,
@@ -333,70 +306,81 @@ export default function GestionPersonalPage() {
       apellidos: nuevosApellidos.trim(),
       correo: nuevoCorreo.trim().toLowerCase(),
       telefono: nuevoTelefono,
-      codigoTarjetaRfid: nuevoRfid.trim() ? nuevoRfid.trim() : `CRN-XYZ-${Math.floor(100000 + Math.random() * 900000)}`,
+      codigoTarjetaRfid: nuevoRfid.trim() ? nuevoRfid.trim() : undefined,
       estado: 'ACTIVO',
       fotoPerfil: nuevoFotoPerfil || undefined,
     };
 
-    const updatedList = [nuevo, ...empleados];
-    setEmpleados(updatedList);
-    saveEmpleados(updatedList);
-    setEmpleadoCreado(nuevo);
+    try {
+      // F-11: alta real en PostgreSQL (EmpleadoRequestDTO)
+      const res = await api.post('/personal/empleados', {
+        tipoDocumento: nuevo.tipoDocumento,
+        numeroDocumento: nuevo.numeroDocumento,
+        nombres: nuevo.nombres,
+        apellidos: nuevo.apellidos,
+        correo: nuevo.correo,
+        telefono: nuevo.telefono,
+        departamentoId: nuevo.departamentoId,
+        codigoTarjetaRfid: nuevo.codigoTarjetaRfid,
+        estado: 'ACTIVO',
+      });
+      const creado: Empleado = {
+        ...nuevo,
+        id: res.data.id,
+        departamentoNombre: res.data.departamentoNombre || nuevo.departamentoNombre,
+        codigoTarjetaRfid: res.data.codigoTarjetaRfid || nuevo.codigoTarjetaRfid,
+        createdAt: res.data.createdAt || new Date().toISOString(),
+      };
 
-    // Intento de persistencia en Backend PostgreSQL
-    api.post('/personal/empleados', {
-      tipoDocumento: nuevo.tipoDocumento,
-      numeroDocumento: nuevo.numeroDocumento,
-      nombres: nuevo.nombres,
-      apellidos: nuevo.apellidos,
-      correo: nuevo.correo,
-      telefono: nuevo.telefono,
-      departamentoId: nuevo.departamentoId,
-      codigoTarjetaRfid: nuevo.codigoTarjetaRfid,
-      estado: 'ACTIVO',
-    }).catch(() => {});
+      setEmpleadoCreado(creado);
 
-    // Notificación en el sistema global con auditoría completa
-    agregarNotificacion({
-      titulo: `👤 Alta de Personal: ${nuevo.nombres} ${nuevo.apellidos}`,
-      mensaje: `Asignado a [${nuevo.areaPrincipalNombre}] (${nuevo.departamentoNombre}) con carnet [${nuevo.codigoTarjetaRfid}].`,
-      tipo: 'PERSONAL',
-      rolesDestino: ['ADMINISTRADOR', 'GESTOR_PERSONAL'],
-      accionUrl: '/dashboard/personal',
-      detallesAuditoria: {
-        evento: 'Alta y Asignación Biométrica de Personal',
-        modulo: 'Gestión de Personal Farmacéutico',
-        operacion: 'ALTA_PERSONAL',
-        usuarioResponsable: 'Gestor de Personal',
-        entidadInvolucrada: `${nuevo.tipoDocumento} ${nuevo.numeroDocumento} - ${nuevo.nombres} ${nuevo.apellidos}`,
-        valorAnterior: null,
-        valorNuevo: JSON.stringify({
-          documento: nuevo.numeroDocumento,
-          nombres: nuevo.nombres,
-          apellidos: nuevo.apellidos,
-          departamento: nuevo.departamentoNombre,
-          area: nuevo.areaPrincipalNombre,
-          rfid: nuevo.codigoTarjetaRfid,
-          estado: nuevo.estado,
-        }),
-        direccionIp: '127.0.0.1',
-        resultado: 'REGISTRO EXITOSO',
-      },
-    });
+      // Notificación en el sistema global con auditoría completa
+      agregarNotificacion({
+        titulo: `👤 Alta de Personal: ${creado.nombres} ${creado.apellidos}`,
+        mensaje: `Asignado a [${nuevo.areaPrincipalNombre}] (${creado.departamentoNombre}) con carnet [${creado.codigoTarjetaRfid || 'SIN_VINCULAR'}].`,
+        tipo: 'PERSONAL',
+        rolesDestino: ['ADMINISTRADOR', 'GESTOR_PERSONAL'],
+        accionUrl: '/dashboard/personal',
+        detallesAuditoria: {
+          evento: 'Alta y Asignación Biométrica de Personal',
+          modulo: 'Gestión de Personal Farmacéutico',
+          operacion: 'ALTA_PERSONAL',
+          usuarioResponsable: 'Gestor de Personal',
+          entidadInvolucrada: `${creado.tipoDocumento} ${creado.numeroDocumento} - ${creado.nombres} ${creado.apellidos}`,
+          valorAnterior: null,
+          valorNuevo: JSON.stringify({
+            documento: creado.numeroDocumento,
+            nombres: creado.nombres,
+            apellidos: creado.apellidos,
+            departamento: creado.departamentoNombre,
+            area: nuevo.areaPrincipalNombre,
+            rfid: creado.codigoTarjetaRfid,
+            estado: 'ACTIVO',
+          }),
+          direccionIp: '127.0.0.1',
+          resultado: 'REGISTRO EXITOSO',
+        },
+      });
 
-    // Limpiar formulario y cerrar modal de registro para abrir el modal dinámico de éxito
-    setNuevoDoc('');
-    setNuevosNombres('');
-    setNuevosApellidos('');
-    setNuevoCorreo('');
-    setNuevoTelefono('');
-    setNuevoRfid('');
-    setNuevoFotoPerfil('');
-    setAreasPermitidas([catalogoLaboratoriosAreas[0].nombre]);
-    setNuevoLaboratorioPrincipal(catalogoLaboratoriosAreas[0].nombre);
-    setErroresForm({});
-    setShowRegistrarModal(false);
-    setShowExitoModal(true);
+      // Limpiar formulario, cerrar modal y recargar la primera página
+      setNuevoDoc('');
+      setNuevosNombres('');
+      setNuevosApellidos('');
+      setNuevoCorreo('');
+      setNuevoTelefono('');
+      setNuevoRfid('');
+      setNuevoFotoPerfil('');
+      setAreasPermitidas([catalogoLaboratoriosAreas[0].nombre]);
+      setNuevoLaboratorioPrincipal(catalogoLaboratoriosAreas[0].nombre);
+      setErroresForm({});
+      setShowRegistrarModal(false);
+      setShowExitoModal(true);
+      setPage(0);
+      cargarEmpleados();
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible registrar al empleado.'),
+        { description: 'Verifica que el documento y el correo no estén ya registrados.' });
+    }
   };
 
   const handleAbrirCambioEstado = (emp: Empleado) => {
@@ -406,11 +390,11 @@ export default function GestionPersonalPage() {
     setShowEstadoModal(true);
   };
 
-  const handleGuardarEstado = (e: React.FormEvent) => {
+  const handleGuardarEstado = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empleadoSeleccionado) return;
 
-    if ((nuevoEstado === 'REVOCADO' || nuevoEstado === 'SUSPENDIDO') && !motivoEstado.trim()) {
+    if (nuevoEstado !== 'ACTIVO' && !motivoEstado.trim()) {
       setErroresForm((prev) => ({ ...prev, estadoMotivo: 'Es obligatorio ingresar el motivo del cambio de estado.' }));
       return;
     }
@@ -418,59 +402,58 @@ export default function GestionPersonalPage() {
     const estadoPrevio = empleadoSeleccionado.estado;
     const codigoAudit = `AUD-SEC-${Math.floor(100000 + Math.random() * 900000)}`;
 
-    setEmpleados((prev) => {
-      const updated = prev.map((emp) =>
-        emp.id === empleadoSeleccionado.id
-          ? { ...emp, estado: nuevoEstado, motivoCambioEstado: motivoEstado }
-          : emp
+    try {
+      // F-12/F-17: cambio de estado en PostgreSQL (EstadoEmpleado: ACTIVO|INACTIVO|BLOQUEADO)
+      const res = await api.patch('/personal/empleados/' + empleadoSeleccionado.id + '/estado', null, {
+        params: { nuevoEstado, motivo: motivoEstado.trim() || undefined },
+      });
+
+      const actualizado: Empleado = {
+        ...empleadoSeleccionado,
+        estado: nuevoEstado,
+        motivoCambioEstado: motivoEstado.trim() || undefined,
+        departamentoNombre: res.data.departamentoNombre || empleadoSeleccionado.departamentoNombre,
+      };
+
+      setEmpleados((prev) =>
+        prev.map((emp) => (emp.id === empleadoSeleccionado.id ? actualizado : emp))
       );
-      saveEmpleados(updated);
-      return updated;
-    });
 
-    // Notificación en el sistema global con auditoría completa
-    agregarNotificacion({
-      titulo: `🛡️ Modificación de Estado (${nuevoEstado}): ${empleadoSeleccionado.nombres}`,
-      mensaje: `Colaborador ${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos} cambió de [${estadoPrevio}] a [${nuevoEstado}]. Ref: ${codigoAudit}.`,
-      tipo: nuevoEstado === 'ACTIVO' ? 'SISTEMA' : 'SEGURIDAD',
-      rolesDestino: ['ADMINISTRADOR', 'SUPERVISOR_ACCESOS'],
-      accionUrl: '/dashboard/personal',
-      detallesAuditoria: {
-        evento: 'Cambio de Estado y Concesión de Acceso',
-        modulo: 'Gestión de Personal',
-        operacion: nuevoEstado === 'ACTIVO' ? 'REACTIVACION_PERSONAL' : 'SUSPENSION_REVOCACION',
-        usuarioResponsable: 'Gestor de Personal',
-        entidadInvolucrada: `${empleadoSeleccionado.tipoDocumento} ${empleadoSeleccionado.numeroDocumento} - ${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos}`,
-        valorAnterior: JSON.stringify({ estado: estadoPrevio }),
-        valorNuevo: JSON.stringify({ estado: nuevoEstado, motivo: motivoEstado.trim() }),
-        direccionIp: '127.0.0.1',
-        resultado: nuevoEstado,
-      },
-    });
+      // Notificación en el sistema global con auditoría completa
+      agregarNotificacion({
+        titulo: `🛡️ Modificación de Estado (${nuevoEstado}): ${empleadoSeleccionado.nombres}`,
+        mensaje: `Colaborador ${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos} cambió de [${estadoPrevio}] a [${nuevoEstado}]. Ref: ${codigoAudit}.`,
+        tipo: nuevoEstado === 'ACTIVO' ? 'SISTEMA' : 'SEGURIDAD',
+        rolesDestino: ['ADMINISTRADOR', 'SUPERVISOR_ACCESOS'],
+        accionUrl: '/dashboard/personal',
+        detallesAuditoria: {
+          evento: 'Cambio de Estado y Concesión de Acceso',
+          modulo: 'Gestión de Personal',
+          operacion: nuevoEstado === 'ACTIVO' ? 'REACTIVACION_PERSONAL' : 'SUSPENSION_REVOCACION',
+          usuarioResponsable: 'Gestor de Personal',
+          entidadInvolucrada: `${empleadoSeleccionado.tipoDocumento} ${empleadoSeleccionado.numeroDocumento} - ${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos}`,
+          valorAnterior: JSON.stringify({ estado: estadoPrevio }),
+          valorNuevo: JSON.stringify({ estado: nuevoEstado, motivo: motivoEstado.trim() }),
+          direccionIp: '127.0.0.1',
+          resultado: nuevoEstado,
+        },
+      });
 
-    // Configurar información para el modal de éxito animado
-    setBitacoraInfo({
-      empleadoNombre: `${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos}`,
-      documento: empleadoSeleccionado.numeroDocumento,
-      estadoAnterior: estadoPrevio,
-      nuevoEstado: nuevoEstado,
-      motivo: motivoEstado.trim() || 'Modificación administrativa autorizada',
-      codigoAuditoria: codigoAudit,
-    });
+      // Configurar información para el modal de éxito animado
+      setBitacoraInfo({
+        empleadoNombre: `${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos}`,
+        documento: empleadoSeleccionado.numeroDocumento,
+        estadoAnterior: estadoPrevio,
+        nuevoEstado: nuevoEstado,
+        motivo: motivoEstado.trim() || 'Modificación administrativa autorizada',
+        codigoAuditoria: codigoAudit,
+      });
 
-    registrarAccesoLocal({
-      areaId: 0,
-      areaNombre: 'Gestión de Personal',
-      numeroDocumentoIngresado: empleadoSeleccionado.numeroDocumento,
-      resultadoAcceso: 'DENEGADO', // Reflejamos como un evento crítico
-      motivoDenegacion: `CAMBIO DE ESTADO: De [${estadoPrevio}] a [${nuevoEstado}]. Motivo: ${motivoEstado.trim()}`,
-      empleadoNombreCompleto: `${empleadoSeleccionado.nombres} ${empleadoSeleccionado.apellidos}`,
-      empleadoId: empleadoSeleccionado.id,
-      timestamp: new Date().toISOString(),
-    });
-
-    setShowEstadoModal(false);
-    setShowBitacoraExitoModal(true);
+      setShowEstadoModal(false);
+      setShowBitacoraExitoModal(true);
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible aplicar el cambio de estado.'));
+    }
   };
 
   return (
@@ -515,9 +498,9 @@ export default function GestionPersonalPage() {
               className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
             >
               <option value="TODOS">Todos los Deptos</option>
-              <option value="Producción y Síntesis">Producción y Síntesis</option>
-              <option value="Control de Calidad">Control de Calidad</option>
-              <option value="Bioseguridad y Mantenimiento">Bioseguridad y Mantenimiento</option>
+              {deptosCatalogo.map((d) => (
+                <option key={d.id} value={d.nombre}>{d.nombre}</option>
+              ))}
             </select>
           </div>
 
@@ -579,14 +562,14 @@ export default function GestionPersonalPage() {
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black tracking-wider uppercase shadow-sm border ${
                       emp.estado === 'ACTIVO'
                         ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                        : emp.estado === 'REVOCADO'
+                        : emp.estado === 'BLOQUEADO'
                         ? 'bg-rose-50 text-rose-600 border-rose-200'
                         : 'bg-amber-50 text-amber-600 border-amber-200'
                     }`}
                   >
                     {emp.estado === 'ACTIVO' && <CheckCircle className="w-3.5 h-3.5" />}
-                    {emp.estado === 'REVOCADO' && <XCircle className="w-3.5 h-3.5" />}
-                    {emp.estado === 'SUSPENDIDO' && <Clock className="w-3.5 h-3.5" />}
+                    {emp.estado === 'BLOQUEADO' && <XCircle className="w-3.5 h-3.5" />}
+                    {emp.estado === 'INACTIVO' && <Clock className="w-3.5 h-3.5" />}
                     {emp.estado}
                   </span>
                 </div>
@@ -1096,12 +1079,12 @@ export default function GestionPersonalPage() {
                     </span>
                   </button>
 
-                  {/* Opción 2: SUSPENDIDO (Amarillo) */}
+                  {/* Opción 2: INACTIVO (Amarillo) */}
                   <button
                     type="button"
-                    onClick={() => setNuevoEstado('SUSPENDIDO')}
+                    onClick={() => setNuevoEstado('INACTIVO')}
                     className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                      nuevoEstado === 'SUSPENDIDO'
+                      nuevoEstado === 'INACTIVO'
                         ? 'bg-amber-50 border-amber-500 shadow-md scale-102 ring-2 ring-amber-400/20'
                         : 'bg-white border-slate-200 hover:border-amber-300 opacity-70 hover:opacity-100'
                     }`}
@@ -1110,19 +1093,19 @@ export default function GestionPersonalPage() {
                       <Clock className="w-4 h-4" />
                     </div>
                     <span className="text-[11px] font-extrabold text-amber-800">
-                      SUSPENDIDO
+                      INACTIVO
                     </span>
                     <span className="text-[9px] text-amber-700 font-medium">
                       Temporal
                     </span>
                   </button>
 
-                  {/* Opción 3: REVOCADO (Rojo) */}
+                  {/* Opción 3: BLOQUEADO (Rojo) */}
                   <button
                     type="button"
-                    onClick={() => setNuevoEstado('REVOCADO')}
+                    onClick={() => setNuevoEstado('BLOQUEADO')}
                     className={`p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                      nuevoEstado === 'REVOCADO'
+                      nuevoEstado === 'BLOQUEADO'
                         ? 'bg-red-50 border-red-500 shadow-md scale-102 ring-2 ring-red-400/20'
                         : 'bg-white border-slate-200 hover:border-red-300 opacity-70 hover:opacity-100'
                     }`}
@@ -1131,7 +1114,7 @@ export default function GestionPersonalPage() {
                       <XCircle className="w-4 h-4" />
                     </div>
                     <span className="text-[11px] font-extrabold text-red-800">
-                      REVOCADO
+                      BLOQUEADO
                     </span>
                     <span className="text-[9px] text-red-700 font-medium">
                       Bloqueado
@@ -1150,9 +1133,9 @@ export default function GestionPersonalPage() {
                   value={motivoEstado}
                   onChange={(e) => setMotivoEstado(e.target.value)}
                   placeholder={
-                    nuevoEstado === 'SUSPENDIDO'
+                    nuevoEstado === 'INACTIVO'
                       ? 'Ejemplo: Suspensión preventiva temporal por protocolo de seguridad...'
-                      : nuevoEstado === 'REVOCADO'
+                      : nuevoEstado === 'BLOQUEADO'
                       ? 'Ejemplo: Bloqueo definitivo por finalización de contrato o falta grave...'
                       : 'Ejemplo: Reactivación autorizada tras cumplimiento de protocolo...'
                   }
@@ -1173,7 +1156,7 @@ export default function GestionPersonalPage() {
                   className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-md transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center gap-1.5 ${
                     nuevoEstado === 'ACTIVO'
                       ? 'bg-emerald-600 hover:bg-emerald-700'
-                      : nuevoEstado === 'SUSPENDIDO'
+                      : nuevoEstado === 'INACTIVO'
                       ? 'bg-amber-600 hover:bg-amber-700'
                       : 'bg-red-600 hover:bg-red-700'
                   }`}
@@ -1272,32 +1255,32 @@ export default function GestionPersonalPage() {
               <div className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg text-white mb-4 animate-bounce ${
                 bitacoraInfo.nuevoEstado === 'ACTIVO'
                   ? 'bg-gradient-to-tr from-emerald-500 to-teal-600 shadow-emerald-500/30'
-                  : bitacoraInfo.nuevoEstado === 'SUSPENDIDO'
+                  : bitacoraInfo.nuevoEstado === 'INACTIVO'
                   ? 'bg-gradient-to-tr from-amber-500 to-yellow-600 shadow-amber-500/30'
                   : 'bg-gradient-to-tr from-red-500 to-rose-600 shadow-red-500/30'
               }`}>
                 {bitacoraInfo.nuevoEstado === 'ACTIVO' && <CheckCircle className="w-8 h-8" />}
-                {bitacoraInfo.nuevoEstado === 'SUSPENDIDO' && <Clock className="w-8 h-8" />}
-                {bitacoraInfo.nuevoEstado === 'REVOCADO' && <XCircle className="w-8 h-8" />}
+                {bitacoraInfo.nuevoEstado === 'INACTIVO' && <Clock className="w-8 h-8" />}
+                {bitacoraInfo.nuevoEstado === 'BLOQUEADO' && <XCircle className="w-8 h-8" />}
               </div>
 
               <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold mb-2 ${
                 bitacoraInfo.nuevoEstado === 'ACTIVO'
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : bitacoraInfo.nuevoEstado === 'SUSPENDIDO'
+                  : bitacoraInfo.nuevoEstado === 'INACTIVO'
                   ? 'bg-amber-50 border-amber-200 text-amber-800'
                   : 'bg-red-50 border-red-200 text-red-800'
               }`}>
                 <Sparkles className="w-3.5 h-3.5 animate-spin" />
                 {bitacoraInfo.nuevoEstado === 'ACTIVO' && 'AUTORIZACIÓN ACTIVA 21 CFR 11'}
-                {bitacoraInfo.nuevoEstado === 'SUSPENDIDO' && 'SUSPENSIÓN TEMPORAL AUDITADA'}
-                {bitacoraInfo.nuevoEstado === 'REVOCADO' && 'BLOQUEO PERMANENTE AUDITADO'}
+                {bitacoraInfo.nuevoEstado === 'INACTIVO' && 'SUSPENSIÓN TEMPORAL AUDITADA'}
+                {bitacoraInfo.nuevoEstado === 'BLOQUEADO' && 'BLOQUEO PERMANENTE AUDITADO'}
               </div>
 
               <h2 className="text-xl font-heading font-extrabold text-slate-800 mb-1">
                 {bitacoraInfo.nuevoEstado === 'ACTIVO' && '¡Colaborador Activado!'}
-                {bitacoraInfo.nuevoEstado === 'SUSPENDIDO' && '¡Suspensión Temporal Registrada!'}
-                {bitacoraInfo.nuevoEstado === 'REVOCADO' && '¡Acceso Revocado y Bloqueado!'}
+                {bitacoraInfo.nuevoEstado === 'INACTIVO' && '¡Suspensión Temporal Registrada!'}
+                {bitacoraInfo.nuevoEstado === 'BLOQUEADO' && '¡Acceso Revocado y Bloqueado!'}
               </h2>
               <p className="text-xs text-slate-500/75 mb-4">
                 La modificación ha sido procesada e inscrita de forma inmutable en el registro de auditoría.
@@ -1307,7 +1290,7 @@ export default function GestionPersonalPage() {
               <div className={`p-4 rounded-2xl border text-left space-y-2 mb-5 ${
                 bitacoraInfo.nuevoEstado === 'ACTIVO'
                   ? 'bg-emerald-50/60 border-emerald-200'
-                  : bitacoraInfo.nuevoEstado === 'SUSPENDIDO'
+                  : bitacoraInfo.nuevoEstado === 'INACTIVO'
                   ? 'bg-amber-50/60 border-amber-200'
                   : 'bg-red-50/60 border-red-200'
               }`}>
@@ -1327,7 +1310,7 @@ export default function GestionPersonalPage() {
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold shadow-2xs ${
                       bitacoraInfo.nuevoEstado === 'ACTIVO'
                         ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                        : bitacoraInfo.nuevoEstado === 'SUSPENDIDO'
+                        : bitacoraInfo.nuevoEstado === 'INACTIVO'
                         ? 'bg-amber-100 text-amber-800 border border-amber-300'
                         : 'bg-red-100 text-red-800 border border-red-300'
                     }`}>
@@ -1359,7 +1342,7 @@ export default function GestionPersonalPage() {
                 className={`w-full py-3.5 px-4 rounded-xl text-white font-bold text-xs shadow-lg transition-all transform hover:scale-[1.02] active:scale-95 cursor-pointer flex items-center justify-center gap-2 ${
                   bitacoraInfo.nuevoEstado === 'ACTIVO'
                     ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30'
-                    : bitacoraInfo.nuevoEstado === 'SUSPENDIDO'
+                    : bitacoraInfo.nuevoEstado === 'INACTIVO'
                     ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
                     : 'bg-red-600 hover:bg-red-700 shadow-red-600/30'
                 }`}

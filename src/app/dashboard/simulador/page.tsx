@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ResultadoAcceso, Empleado } from '@/types';
+import { ResultadoAcceso, Empleado, EstadoEmpleado } from '@/types';
 import { api } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -16,6 +16,19 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from 'lucide-react';
+
+// DTO real del backend POST /api/accesos/molinete (ResultadoAccesoResponseDTO)
+interface ResultadoMolineteDTO {
+  idHistorial?: string;
+  numeroDocumentoIngresado?: string;
+  codigoTarjetaRfid?: string;
+  nombreEmpleado?: string;
+  nombreArea?: string;
+  resultado: ResultadoAcceso;
+  color?: string;
+  motivo?: string;
+  fechaHora?: string;
+}
 
 export default function SimuladorAccesoPage() {
   const { agregarNotificacion } = useNotifications();
@@ -73,7 +86,7 @@ export default function SimuladorAccesoPage() {
         if (usuarioSistema) {
           esUsuarioSistema = true;
           rolSistema = usuarioSistema.rol;
-          const estadoMapeado = usuarioSistema.estado === 'ACTIVO' ? 'ACTIVO' : usuarioSistema.estado === 'BLOQUEADO' ? 'REVOCADO' : 'SUSPENDIDO';
+          const estadoMapeado: EstadoEmpleado = usuarioSistema.estado === 'ACTIVO' ? 'ACTIVO' : usuarioSistema.estado === 'BLOQUEADO' ? 'BLOQUEADO' : 'INACTIVO';
           empleado = {
             id: usuarioSistema.id,
             departamentoId: 0,
@@ -93,7 +106,7 @@ export default function SimuladorAccesoPage() {
             apellidos: usuarioSistema.apellidos,
             correo: usuarioSistema.correo,
             telefono: 'Oficina Central',
-            estado: estadoMapeado as any,
+            estado: estadoMapeado,
           };
         } else {
           empleado = buscarPorDocumento(doc.trim());
@@ -117,18 +130,17 @@ export default function SimuladorAccesoPage() {
         });
 
         registrarAccesoLocal({
-          areaId: parseInt(areaId, 10),
-          areaNombre: area,
+          nombreArea: area,
           numeroDocumentoIngresado: identificador,
-          codigoTarjetaIngresado: tipoIdentificador === 'RFID' ? identificador : undefined,
-          resultadoAcceso: estadoFinal,
-          motivoDenegacion: motivo,
-          timestamp: timestampActual,
+          codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+          resultado: estadoFinal,
+          motivo,
+          fechaHora: timestampActual,
         });
         return;
       }
 
-      if (empleado.estado === 'REVOCADO' || empleado.estado === 'SUSPENDIDO' || empleado.estado === 'INACTIVO') {
+      if (empleado.estado === 'BLOQUEADO' || empleado.estado === 'INACTIVO') {
         const estadoFinal: ResultadoAcceso = 'DENEGADO';
         const motivo = `Credencial en estado ${empleado.estado}. Acceso revocado por protocolo de seguridad.`;
         toast.error(`Acceso Denegado — ${empleado.estado}`, { id: 'scan-toast' });
@@ -142,15 +154,13 @@ export default function SimuladorAccesoPage() {
         });
 
         registrarAccesoLocal({
-          areaId: parseInt(areaId, 10),
-          areaNombre: area,
+          nombreArea: area,
           numeroDocumentoIngresado: identificador,
-          codigoTarjetaIngresado: tipoIdentificador === 'RFID' ? identificador : undefined,
-          resultadoAcceso: estadoFinal,
-          motivoDenegacion: motivo,
-          empleadoNombreCompleto: `${empleado.nombres} ${empleado.apellidos}`,
-          empleadoId: empleado.id,
-          timestamp: timestampActual,
+          codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+          resultado: estadoFinal,
+          motivo,
+          nombreEmpleado: `${empleado.nombres} ${empleado.apellidos}`,
+          fechaHora: timestampActual,
         });
         return;
       }
@@ -184,15 +194,13 @@ export default function SimuladorAccesoPage() {
       });
 
       registrarAccesoLocal({
-        areaId: parseInt(areaId, 10),
-        areaNombre: area,
+        nombreArea: area,
         numeroDocumentoIngresado: identificador,
-        codigoTarjetaIngresado: tipoIdentificador === 'RFID' ? identificador : undefined,
-        resultadoAcceso: estadoFinal,
-        motivoDenegacion: tieneAccesoZona ? undefined : motivo,
-        empleadoNombreCompleto: `${empleado.nombres} ${empleado.apellidos}`,
-        empleadoId: empleado.id,
-        timestamp: timestampActual,
+        codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+        resultado: estadoFinal,
+        motivo: tieneAccesoZona ? undefined : motivo,
+        nombreEmpleado: `${empleado.nombres} ${empleado.apellidos}`,
+        fechaHora: timestampActual,
       });
     };
 
@@ -200,30 +208,30 @@ export default function SimuladorAccesoPage() {
       // Simulación de delay de lectura biométrica de torniquete
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      const res = await api.post('/accesos/molinete', {
+      const res = await api.post<ResultadoMolineteDTO>('/accesos/molinete', {
         numeroDocumento: tipoIdentificador === 'DOCUMENTO' ? identificador.trim() : undefined,
         codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador.trim() : undefined,
         areaId: parseInt(areaId, 10),
       });
 
-      const estado = res.data.resultado as ResultadoAcceso;
-      const timestampActual = new Date().toISOString();
+      const estado = res.data.resultado;
+      const timestampActual = res.data.fechaHora || new Date().toISOString();
 
       setResultado({
         estado,
-        motivo: res.data.motivo || res.data.mensaje,
+        motivo: res.data.motivo || undefined,
         timestamp: timestampActual,
         areaConsultada: res.data.nombreArea || areaSeleccionada,
         perfil: res.data.nombreEmpleado ? {
           id: 0,
           departamentoId: 0,
           tipoDocumento: 'CC',
-          numeroDocumento: identificador,
+          numeroDocumento: res.data.numeroDocumentoIngresado || identificador,
           nombres: res.data.nombreEmpleado.split(' ')[0] || res.data.nombreEmpleado,
           apellidos: res.data.nombreEmpleado.split(' ').slice(1).join(' ') || '',
           correo: 'personal@laboratorioxyz.com',
           telefono: 'Registrado en Servidor',
-          estado: res.data.estadoEmpleado || (estado === 'AUTORIZADO' ? 'ACTIVO' : 'REVOCADO'),
+          estado: estado === 'AUTORIZADO' ? 'ACTIVO' : 'BLOQUEADO',
           areaPrincipalNombre: res.data.nombreArea || areaSeleccionada,
         } : undefined,
       });

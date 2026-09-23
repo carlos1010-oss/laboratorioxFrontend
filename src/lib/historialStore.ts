@@ -9,45 +9,55 @@
  *    eventos 'historial-updated' para actualización en tiempo real en la interfaz.
  */
 
-import { HistorialAcceso, ResultadoAcceso } from '@/types';
+import { HistorialAcceso, Pagina, ResultadoAcceso } from '@/types';
 import { api } from './api';
 
 const STORE_KEY = 'zone_control_historial_v3';
 
+// DTO real del backend GET /api/accesos/historial (ResultadoAccesoResponseDTO)
+interface HistorialBackendDTO {
+  idHistorial?: string;
+  numeroDocumentoIngresado?: string;
+  codigoTarjetaRfid?: string;
+  nombreEmpleado?: string;
+  nombreArea?: string;
+  resultado?: ResultadoAcceso;
+  color?: string;
+  motivo?: string;
+  fechaHora?: string;
+  ipOrigen?: string;
+  userAgent?: string;
+}
+
 // Registros demo iniciales para cuando la base de datos esté vacía
 const registrosIniciales: HistorialAcceso[] = [
   {
-    id: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d',
-    empleadoId: 1,
-    empleadoNombreCompleto: 'Dr. Carlos Mendoza',
-    areaId: 1,
-    areaNombre: 'Laboratorio de Síntesis Molecular (Área A)',
+    idHistorial: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d',
+    nombreEmpleado: 'Dr. Carlos Mendoza',
+    nombreArea: 'Laboratorio de Síntesis Molecular (Área A)',
     numeroDocumentoIngresado: '1012345678',
-    codigoTarjetaIngresado: 'RFID-001',
-    resultadoAcceso: 'AUTORIZADO',
-    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
+    codigoTarjetaRfid: 'RFID-001',
+    resultado: 'AUTORIZADO',
+    fechaHora: new Date(Date.now() - 3600000 * 2).toISOString(),
   },
   {
-    id: 'f9e8d7c6-b5a4-3210-fedc-ba9876543210',
-    empleadoId: 2,
-    empleadoNombreCompleto: 'Ing. Laura Restrepo',
-    areaId: 1,
-    areaNombre: 'Laboratorio de Síntesis Molecular (Área A)',
+    idHistorial: 'f9e8d7c6-b5a4-3210-fedc-ba9876543210',
+    nombreEmpleado: 'Ing. Laura Restrepo',
+    nombreArea: 'Laboratorio de Síntesis Molecular (Área A)',
     numeroDocumentoIngresado: '1087654321',
-    codigoTarjetaIngresado: 'RFID-002',
-    resultadoAcceso: 'DENEGADO',
-    motivoDenegacion: 'Permiso REVOCADO en área de alto riesgo',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
+    codigoTarjetaRfid: 'RFID-002',
+    resultado: 'DENEGADO',
+    motivo: 'Permiso revocado en área de alto riesgo',
+    fechaHora: new Date(Date.now() - 3600000).toISOString(),
   },
   {
-    id: '00112233-4455-6677-8899-aabbccddeeff',
-    areaId: 2,
-    areaNombre: 'Sala Limpia de Liofilización (Área B)',
+    idHistorial: '00112233-4455-6677-8899-aabbccddeeff',
+    nombreArea: 'Sala Limpia de Liofilización (Área B)',
     numeroDocumentoIngresado: '9988776655',
-    codigoTarjetaIngresado: 'RFID-UNKNOWN',
-    resultadoAcceso: 'NO_REGISTRADO',
-    motivoDenegacion: 'Credencial no existe en padrón de empleados',
-    timestamp: new Date(Date.now() - 1800000).toISOString(),
+    codigoTarjetaRfid: 'RFID-UNKNOWN',
+    resultado: 'NO_REGISTRADO',
+    motivo: 'Credencial no existe en padrón de empleados',
+    fechaHora: new Date(Date.now() - 1800000).toISOString(),
   },
 ];
 
@@ -85,20 +95,18 @@ export function saveHistorialLocal(items: HistorialAcceso[]): void {
  * Lo antepone al inicio de la lista y emite evento global.
  */
 export function registrarAccesoLocal(
-  registro: Omit<HistorialAcceso, 'id' | 'timestamp'> & { id?: string; timestamp?: string }
+  registro: Omit<HistorialAcceso, 'idHistorial' | 'fechaHora'> & { idHistorial?: string; fechaHora?: string }
 ): HistorialAcceso {
   const historial = getHistorialLocal();
   const nuevoItem: HistorialAcceso = {
-    id: registro.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
-    timestamp: registro.timestamp || new Date().toISOString(),
-    areaId: registro.areaId,
-    areaNombre: registro.areaNombre,
+    idHistorial: registro.idHistorial || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    fechaHora: registro.fechaHora || new Date().toISOString(),
+    nombreArea: registro.nombreArea,
     numeroDocumentoIngresado: registro.numeroDocumentoIngresado,
-    codigoTarjetaIngresado: registro.codigoTarjetaIngresado,
-    resultadoAcceso: registro.resultadoAcceso as ResultadoAcceso,
-    motivoDenegacion: registro.motivoDenegacion,
-    empleadoId: registro.empleadoId,
-    empleadoNombreCompleto: registro.empleadoNombreCompleto,
+    codigoTarjetaRfid: registro.codigoTarjetaRfid,
+    resultado: registro.resultado,
+    motivo: registro.motivo,
+    nombreEmpleado: registro.nombreEmpleado,
   };
 
   const actualizado = [nuevoItem, ...historial];
@@ -122,27 +130,31 @@ export async function obtenerHistorialCombinado(): Promise<HistorialAcceso[]> {
   const localItems = getHistorialLocal();
 
   try {
-    const res = await api.get<any[]>('/accesos/historial');
-    if (res.data && Array.isArray(res.data)) {
-      const backendItems: HistorialAcceso[] = res.data.map((item) => ({
-        id: item.id?.toString() || `bk-${item.timestamp}`,
-        empleadoId: item.empleadoId ?? undefined,
-        empleadoNombreCompleto: item.empleadoNombreCompleto || (item.resultadoAcceso === 'NO_REGISTRADO' ? 'Credencial No Registrada' : 'Usuario del Sistema'),
-        areaId: item.areaId || 1,
-        areaNombre: item.areaNombre || 'Área no especificada',
+    const res = await api.get<Pagina<HistorialBackendDTO> | HistorialBackendDTO[]>('/accesos/historial');
+    const data = res.data;
+    const items: HistorialBackendDTO[] = Array.isArray(data) ? data : (data?.content ?? []);
+
+    if (items && items.length >= 0) {
+      const backendItems: HistorialAcceso[] = items.map((item) => ({
+        idHistorial: item.idHistorial?.toString() || `bk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         numeroDocumentoIngresado: item.numeroDocumentoIngresado || '',
-        codigoTarjetaIngresado: item.codigoTarjetaIngresado || undefined,
-        resultadoAcceso: item.resultadoAcceso as ResultadoAcceso,
-        motivoDenegacion: item.motivoDenegacion || undefined,
-        timestamp: item.timestamp || new Date().toISOString(),
+        codigoTarjetaRfid: item.codigoTarjetaRfid || undefined,
+        nombreEmpleado: item.nombreEmpleado || (item.resultado === 'NO_REGISTRADO' ? 'Credencial No Registrada' : 'Usuario del Sistema'),
+        nombreArea: item.nombreArea || 'Área no especificada',
+        resultado: item.resultado as ResultadoAcceso,
+        color: item.color as HistorialAcceso['color'],
+        motivo: item.motivo || undefined,
+        fechaHora: item.fechaHora || new Date().toISOString(),
+        ipOrigen: item.ipOrigen,
+        userAgent: item.userAgent,
       }));
 
-      // Fusionar evitando duplicados por id o por timestamp exacto + documento
+      // Fusionar evitando duplicados por idHistorial o por fechaHora exacta + documento
       const combined = [...backendItems];
-      const seen = new Set(combined.map((b) => `${b.numeroDocumentoIngresado}_${b.timestamp}`));
+      const seen = new Set(combined.map((b) => `${b.numeroDocumentoIngresado}_${b.fechaHora}`));
 
       for (const loc of localItems) {
-        const key = `${loc.numeroDocumentoIngresado}_${loc.timestamp}`;
+        const key = `${loc.numeroDocumentoIngresado}_${loc.fechaHora}`;
         if (!seen.has(key)) {
           combined.push(loc);
           seen.add(key);
@@ -150,7 +162,7 @@ export async function obtenerHistorialCombinado(): Promise<HistorialAcceso[]> {
       }
 
       // Ordenar por fecha descendente (lo más reciente primero)
-      combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      combined.sort((a, b) => new Date(b.fechaHora).getTime() - new Date(a.fechaHora).getTime());
 
       // Guardar caché actualizada
       if (typeof window !== 'undefined') {
@@ -163,5 +175,5 @@ export async function obtenerHistorialCombinado(): Promise<HistorialAcceso[]> {
     // Si no hay conexión al backend, retornar local
   }
 
-  return localItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return localItems.sort((a, b) => new Date(b.fechaHora).getTime() - new Date(a.fechaHora).getTime());
 }

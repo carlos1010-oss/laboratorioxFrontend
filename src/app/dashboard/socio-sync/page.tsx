@@ -1,8 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
 import { SincronizacionSocio } from '@/types';
 import {
   Globe2,
@@ -24,63 +23,80 @@ import {
 } from 'lucide-react';
 import { useNotifications } from '@/context/NotificationContext';
 import { HistorialAcceso } from '@/types';
-
-const mockSincronizaciones: SincronizacionSocio[] = [
-  {
-    id: 101,
-    departamentoId: 1,
-    periodoInicio: '2026-09-01T00:00:00Z',
-    periodoFin: '2026-09-07T23:59:59Z',
-    estado: 'EXITOSO',
-    intentosRealizados: 1,
-    codigoRespuestaHttp: 200,
-    fechaEnvio: '2026-09-08T02:00:15Z',
-  },
-  {
-    id: 102,
-    departamentoId: 2,
-    periodoInicio: '2026-09-08T00:00:00Z',
-    periodoFin: '2026-09-14T23:59:59Z',
-    estado: 'REINTENTANDO',
-    intentosRealizados: 2,
-    codigoRespuestaHttp: 504,
-    fechaEnvio: '2026-09-15T02:00:00Z',
-    fechaProximoReintento: '2026-09-16T10:00:00Z',
-  },
-];
+import { api, extraerMensajeError } from '@/lib/api';
+import { toast } from 'sonner';
 
 const mockLoteActual: HistorialAcceso[] = [
   {
-    id: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d',
-    empleadoId: 1,
-    empleadoNombreCompleto: 'Dr. Carlos Mendoza',
-    areaId: 1,
-    areaNombre: 'Laboratorio de Síntesis Molecular (Área A)',
+    idHistorial: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d',
+    nombreEmpleado: 'Dr. Carlos Mendoza',
+    nombreArea: 'Laboratorio de Síntesis Molecular (Área A)',
     numeroDocumentoIngresado: '1012345678',
-    codigoTarjetaIngresado: 'RFID-001',
-    resultadoAcceso: 'AUTORIZADO',
-    timestamp: new Date().toISOString(),
+    codigoTarjetaRfid: 'RFID-001',
+    resultado: 'AUTORIZADO',
+    fechaHora: new Date().toISOString(),
   },
   {
-    id: 'f9e8d7c6-b5a4-3210-fedc-ba9876543210',
-    empleadoId: 2,
-    empleadoNombreCompleto: 'Ing. Laura Restrepo',
-    areaId: 1,
-    areaNombre: 'Laboratorio de Síntesis Molecular (Área A)',
+    idHistorial: 'f9e8d7c6-b5a4-3210-fedc-ba9876543210',
+    nombreEmpleado: 'Ing. Laura Restrepo',
+    nombreArea: 'Laboratorio de Síntesis Molecular (Área A)',
     numeroDocumentoIngresado: '1087654321',
-    codigoTarjetaIngresado: 'RFID-002',
-    resultadoAcceso: 'DENEGADO',
-    motivoDenegacion: 'Permiso REVOCADO en área de alto riesgo',
-    timestamp: new Date().toISOString(),
+    codigoTarjetaRfid: 'RFID-002',
+    resultado: 'DENEGADO',
+    motivo: 'Permiso revocado en área de alto riesgo',
+    fechaHora: new Date().toISOString(),
   }
 ];
 
+// DTO real del backend /api/sincronizacion/historial (SincronizacionResponseDTO)
+interface SincronizacionBackendDTO {
+  id: number;
+  periodoInicio: string;
+  periodoFin: string;
+  departamentoId?: number;
+  nombreDepartamento?: string;
+  payloadJson?: string;
+  estado: 'EXITOSO' | 'EN_REINTENTO' | 'FALLIDO';
+  intentosRealizados: number;
+  codigoRespuestaHttp?: number;
+  fechaEnvio?: string;
+  fechaProximoReintento?: string;
+  createdAt?: string;
+}
+
+const mapearSincronizacion = (dto: SincronizacionBackendDTO): SincronizacionSocio => ({
+  id: dto.id,
+  periodoInicio: dto.periodoInicio,
+  periodoFin: dto.periodoFin,
+  departamentoId: dto.departamentoId,
+  nombreDepartamento: dto.nombreDepartamento,
+  payloadJson: dto.payloadJson,
+  estado: dto.estado,
+  intentosRealizados: dto.intentosRealizados ?? 0,
+  codigoRespuestaHttp: dto.codigoRespuestaHttp,
+  fechaEnvio: dto.fechaEnvio,
+  fechaProximoReintento: dto.fechaProximoReintento,
+  createdAt: dto.createdAt,
+});
+
 export default function SocioSyncPage() {
-  const [sincronizaciones, setSincronizaciones] = useState<SincronizacionSocio[]>(mockSincronizaciones);
+  const [sincronizaciones, setSincronizaciones] = useState<SincronizacionSocio[]>([]);
   const [forzando, setForzando] = useState(false);
   const [progreso, setProgreso] = useState(0);
   const [pasoTexto, setPasoTexto] = useState('');
   const [alertaMsg, setAlertaMsg] = useState<{ tipo: 'EXITO' | 'ERROR'; texto: string } | null>(null);
+
+  useEffect(() => {
+    api.get('/sincronizacion/historial')
+      .then((res) => {
+        const lista = Array.isArray(res.data) ? res.data.map(mapearSincronizacion) : [];
+        setSincronizaciones(lista);
+      })
+      .catch((err) => {
+        setSincronizaciones([]);
+        toast.error(extraerMensajeError(err, 'No fue posible cargar el historial de sincronización.'));
+      });
+  }, []);
 
   // Filtros Avanzados
   const [showFiltrosAvanzados, setShowFiltrosAvanzados] = useState(false);
@@ -111,55 +127,60 @@ export default function SocioSyncPage() {
 
   const { agregarNotificacion } = useNotifications();
 
-  const handleForzarEnvio = () => {
+  const handleForzarEnvio = async () => {
     setForzando(true);
     setAlertaMsg(null);
     setProgreso(20);
     setPasoTexto('1/3: Empaquetando registros de accesos y firmas digitales...');
 
-    setTimeout(() => {
-      setProgreso(60);
-      setPasoTexto('2/3: Conectando con servidor B2B seguro (partner-api.pharma-cloud.org)...');
-    }, 600);
+    setProgreso(60);
+    setPasoTexto('2/3: Conectando con servidor B2B seguro (partner-api.pharma-cloud.org)...');
 
-    setTimeout(() => {
+    try {
+      const periodoFin = new Date();
+      const periodoInicio = new Date();
+      periodoInicio.setDate(periodoInicio.getDate() - 7);
+      const departamentoId = sincronizaciones[0]?.departamentoId ?? 1;
+
+      const res = await api.post('/sincronizacion/socio', {
+        periodoInicio: periodoInicio.toISOString(),
+        periodoFin: periodoFin.toISOString(),
+        departamentoId,
+      });
+
       setProgreso(90);
       setPasoTexto('3/3: Transmitiendo payload cifrado y esperando ACK (HTTP 200)...');
-    }, 1200);
 
-    setTimeout(() => {
+      const nuevoRegistro = mapearSincronizacion(res.data);
+
       setProgreso(100);
       setForzando(false);
       setPasoTexto('');
-
-      const nuevoLoteId = Math.floor(Math.random() * 900) + 103;
-      const nuevoRegistro: SincronizacionSocio = {
-        id: nuevoLoteId,
-        departamentoId: 1,
-        periodoInicio: '2026-09-15T00:00:00Z',
-        periodoFin: new Date().toISOString(),
-        estado: 'EXITOSO',
-        intentosRealizados: 1,
-        codigoRespuestaHttp: 200,
-        fechaEnvio: new Date().toISOString(),
-      };
 
       setSincronizaciones((prev) => [nuevoRegistro, ...prev]);
 
       setAlertaMsg({
         tipo: 'EXITO',
-        texto: `¡Transmisión forzada con éxito! El lote #SYNC-${nuevoLoteId} fue recibido y confirmado por el socio internacional con código HTTP 200 OK.`,
+        texto: `¡Transmisión forzada con éxito! El lote #SYNC-${nuevoRegistro.id} fue recibido y confirmado por el socio internacional con código ${nuevoRegistro.codigoRespuestaHttp ?? 200} OK.`,
       });
+
+      toast.success(`Lote #SYNC-${nuevoRegistro.id} transmitido exitosamente.`);
 
       // Disparar notificación al sistema en tiempo real
       agregarNotificacion({
-        titulo: `🌐 Sincronización Manual #SYNC-${nuevoLoteId}`,
+        titulo: `🌐 Sincronización Manual #SYNC-${nuevoRegistro.id}`,
         mensaje: `Lote de trazabilidad transmitido exitosamente al socio internacional con código 200 OK.`,
         tipo: 'SISTEMA',
         rolesDestino: ['ADMINISTRADOR', 'SUPERVISOR_ACCESOS'],
         accionUrl: '/dashboard/socio-sync',
       });
-    }, 1800);
+    } catch (err) {
+      setForzando(false);
+      setPasoTexto('');
+      const msg = extraerMensajeError(err, 'No fue posible forzar el envío de la sincronización.');
+      toast.error(msg);
+      setAlertaMsg({ tipo: 'ERROR', texto: msg });
+    }
   };
 
   return (
@@ -191,10 +212,10 @@ export default function SocioSyncPage() {
             onClick={() => {
               const textoReporte = mockLoteActual.map((r, i) => 
                 `📌 Registro #${i + 1}%0D%0A` +
-                `👤 Persona: ${r.empleadoNombreCompleto}%0D%0A` +
-                `🏢 Área: ${r.areaNombre}%0D%0A` +
-                `⏱️ Fecha: ${new Date(r.timestamp).toLocaleString()}%0D%0A` +
-                `📝 Resultado: ${r.resultadoAcceso}%0D%0A` +
+                `👤 Persona: ${r.nombreEmpleado}%0D%0A` +
+                `🏢 Área: ${r.nombreArea}%0D%0A` +
+                `⏱️ Fecha: ${new Date(r.fechaHora).toLocaleString()}%0D%0A` +
+                `📝 Resultado: ${r.resultado}%0D%0A` +
                 `----------------------------------------`
               ).join('%0D%0A%0D%0A');
               
@@ -319,28 +340,28 @@ export default function SocioSyncPage() {
               <AnimatePresence>
                 {mockLoteActual.map((item, idx) => (
                   <motion.tr 
-                    key={item.id} 
+                    key={item.idHistorial} 
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.2, delay: idx * 0.05 }}
                     className="hover:bg-slate-50/80 transition-colors group"
                   >
-                    <td className="p-3 font-semibold text-slate-800">{item.empleadoNombreCompleto}</td>
-                    <td className="p-3 text-slate-500 font-medium">{item.areaNombre}</td>
+                    <td className="p-3 font-semibold text-slate-800">{item.nombreEmpleado}</td>
+                    <td className="p-3 text-slate-500 font-medium">{item.nombreArea}</td>
                     <td className="p-3">
                       <span
                         className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-extrabold shadow-sm ${
-                          item.resultadoAcceso === 'AUTORIZADO'
+                          item.resultado === 'AUTORIZADO'
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                             : 'bg-red-100 text-red-800 border border-red-200'
                         }`}
                       >
-                        {item.resultadoAcceso}
+                        {item.resultado}
                       </span>
                     </td>
                     <td className="p-3 font-mono text-[11px] text-slate-500/80">
-                      {new Date(item.timestamp).toLocaleString()}
+                      {new Date(item.fechaHora).toLocaleString()}
                     </td>
                   </motion.tr>
                 ))}
@@ -391,7 +412,7 @@ export default function SocioSyncPage() {
                   >
                     <option value="TODOS">Todos los Estados</option>
                     <option value="EXITOSO">Solo Exitosos</option>
-                    <option value="REINTENTANDO">Solo Reintentando</option>
+                    <option value="EN_REINTENTO">Solo Reintentando</option>
                     <option value="FALLIDO">Solo Fallidos</option>
                   </select>
                 </div>
