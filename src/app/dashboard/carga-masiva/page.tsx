@@ -49,23 +49,38 @@ export default function CargaMasivaPage() {
     }
   };
 
+  const MAX_CSV_BYTES = 5 * 1024 * 1024;
+
+  const validarArchivo = (f: File): boolean => {
+    if (!f.name.toLowerCase().endsWith('.csv')) {
+      alert('Por favor suba un archivo en formato .CSV');
+      return false;
+    }
+    if (f.size > MAX_CSV_BYTES) {
+      alert('El archivo supera el tamaño máximo permitido de 5 MB.');
+      return false;
+    }
+    return true;
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const f = e.dataTransfer.files[0];
-      if (f.name.endsWith('.csv')) {
+      if (validarArchivo(f)) {
         setFile(f);
-      } else {
-        alert('Por favor suba un archivo en formato .CSV');
       }
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const f = e.target.files[0];
+      if (validarArchivo(f)) {
+        setFile(f);
+      }
     }
   };
 
@@ -190,7 +205,7 @@ export default function CargaMasivaPage() {
         <div>
           <h1 className="text-2xl font-heading font-extrabold text-slate-800">Carga Masiva de Personal</h1>
           <p className="text-xs text-slate-500/70 mt-1">
-            Incorporación por archivo plano CSV con validación previa de integridad (RF F-16, CU-16).
+            Incorporación por archivo plano CSV con validación previa de integridad (RF F-13/F-14/F-15, CU-05).
           </p>
         </div>
 
@@ -393,7 +408,7 @@ export default function CargaMasivaPage() {
                   </thead>
                   <tbody className="divide-y divide-red-100 bg-white">
                     {resultado.errores.map((err, idx) => {
-                      const filaMatch = /fila\s+(\d+)/i.exec(err);
+                      const filaMatch = /l[ií]nea\s+(\d+)/i.exec(err);
                       return (
                         <tr key={idx} className="hover:bg-red-50/40">
                           <td className="p-3 font-mono font-bold text-red-700">
