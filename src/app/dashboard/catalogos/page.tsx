@@ -43,7 +43,7 @@ const mockAreas: AreaRestringida[] = [
 
 export default function CatalogosPage() {
   const { agregarNotificacion } = useNotifications();
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
   const esAdmin = hasRole(['ADMINISTRADOR']);
   const [deptos, setDeptos] = useState<Departamento[]>(mockDeptos);
   const [areas, setAreas] = useState<AreaRestringida[]>(mockAreas);
