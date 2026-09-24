@@ -32,8 +32,10 @@ interface ResultadoMolineteDTO {
 
 export default function SimuladorAccesoPage() {
   const { agregarNotificacion } = useNotifications();
-  const [identificador, setIdentificador] = useState('');
-  const [tipoIdentificador, setTipoIdentificador] = useState<'DOCUMENTO' | 'RFID'>('DOCUMENTO');
+  // Doble factor también en el simulador interno: documento Y tarjeta de la
+  // misma persona (mismo criterio del kiosco público).
+  const [documento, setDocumento] = useState('');
+  const [tarjeta, setTarjeta] = useState('');
   const [areaId, setAreaId] = useState('3');
   const [loading, setLoading] = useState(false);
 
@@ -76,8 +78,8 @@ export default function SimuladorAccesoPage() {
 
   const handleSimular = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identificador.trim()) {
-      toast.error('Por favor ingresa un número de documento o carnet RFID.');
+    if (!documento.trim() || !tarjeta.trim()) {
+      toast.error('Por favor ingresa el número de documento Y el carnet RFID (doble factor).');
       return;
     }
 
@@ -88,19 +90,19 @@ export default function SimuladorAccesoPage() {
 
     const areaSeleccionada = areasDemo.find((a) => a.id === areaId)?.nombre ?? 'Área General';
 
-    // Función de resolución y fallback local
-    const buscarEnLocal = async (doc: string, rfid: string | null, area: string) => {
+    // Función de resolución y fallback local (doble factor: ambas credenciales
+    // deben pertenecer a la misma persona)
+    const buscarEnLocal = async (doc: string, rfid: string, area: string) => {
       const { buscarPorDocumento, buscarPorRfid } = await import('@/lib/personalStore');
       const { buscarUsuarioPorDocumento } = await import('@/lib/usuariosStore');
       let empleado: Empleado | null = null;
       let esUsuarioSistema = false;
       let rolSistema = '';
 
-      if (tipoIdentificador === 'DOCUMENTO') {
-        const usuarioSistema = buscarUsuarioPorDocumento(doc.trim());
-        if (usuarioSistema) {
-          esUsuarioSistema = true;
-          rolSistema = usuarioSistema.rol;
+      const usuarioSistema = buscarUsuarioPorDocumento(doc.trim());
+      if (usuarioSistema) {
+        esUsuarioSistema = true;
+        rolSistema = usuarioSistema.rol;
           const estadoMapeado: EstadoEmpleado = usuarioSistema.estado === 'ACTIVO' ? 'ACTIVO' : usuarioSistema.estado === 'BLOQUEADO' ? 'BLOQUEADO' : 'INACTIVO';
           empleado = {
             id: usuarioSistema.id,
@@ -124,11 +126,35 @@ export default function SimuladorAccesoPage() {
             estado: estadoMapeado,
           };
         } else {
-          empleado = buscarPorDocumento(doc.trim());
+          const porDocumento = buscarPorDocumento(doc.trim());
+          const porTarjeta = buscarPorRfid(rfid.trim());
+          if (!porDocumento || !porTarjeta) {
+            empleado = null;
+          } else if (porDocumento.numeroDocumento !== porTarjeta.numeroDocumento) {
+            const estadoFinal: ResultadoAcceso = 'DENEGADO';
+            const motivo = 'El documento y la tarjeta no corresponden a la misma persona.';
+            toast.error('Acceso Denegado', { id: 'scan-toast' });
+
+            setResultado({
+              estado: estadoFinal,
+              motivo,
+              timestamp: new Date().toISOString(),
+              areaConsultada: area,
+            });
+
+            registrarAccesoLocal({
+              nombreArea: area,
+              numeroDocumentoIngresado: doc,
+              codigoTarjetaRfid: rfid,
+              resultado: estadoFinal,
+              motivo,
+              fechaHora: new Date().toISOString(),
+            });
+            return;
+          } else {
+            empleado = porDocumento;
+          }
         }
-      } else if (rfid) {
-        empleado = buscarPorRfid(rfid.trim());
-      }
 
       const timestampActual = new Date().toISOString();
 
@@ -146,8 +172,8 @@ export default function SimuladorAccesoPage() {
 
         registrarAccesoLocal({
           nombreArea: area,
-          numeroDocumentoIngresado: identificador,
-          codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+          numeroDocumentoIngresado: doc,
+          codigoTarjetaRfid: rfid,
           resultado: estadoFinal,
           motivo,
           fechaHora: timestampActual,
@@ -170,8 +196,8 @@ export default function SimuladorAccesoPage() {
 
         registrarAccesoLocal({
           nombreArea: area,
-          numeroDocumentoIngresado: identificador,
-          codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+          numeroDocumentoIngresado: doc,
+          codigoTarjetaRfid: rfid,
           resultado: estadoFinal,
           motivo,
           nombreEmpleado: `${empleado.nombres} ${empleado.apellidos}`,
@@ -210,8 +236,8 @@ export default function SimuladorAccesoPage() {
 
       registrarAccesoLocal({
         nombreArea: area,
-        numeroDocumentoIngresado: identificador,
-        codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador : undefined,
+        numeroDocumentoIngresado: doc,
+        codigoTarjetaRfid: rfid,
         resultado: estadoFinal,
         motivo: tieneAccesoZona ? undefined : motivo,
         nombreEmpleado: `${empleado.nombres} ${empleado.apellidos}`,
@@ -224,8 +250,8 @@ export default function SimuladorAccesoPage() {
       await new Promise((resolve) => setTimeout(resolve, 800));
 
       const res = await api.post<ResultadoMolineteDTO>('/accesos/molinete', {
-        numeroDocumento: tipoIdentificador === 'DOCUMENTO' ? identificador.trim() : undefined,
-        codigoTarjetaRfid: tipoIdentificador === 'RFID' ? identificador.trim() : undefined,
+        numeroDocumento: documento.trim(),
+        codigoTarjetaRfid: tarjeta.trim(),
         areaId: parseInt(areaId, 10),
       });
 
@@ -241,7 +267,7 @@ export default function SimuladorAccesoPage() {
           id: 0,
           departamentoId: 0,
           tipoDocumento: 'CC',
-          numeroDocumento: res.data.numeroDocumentoIngresado || identificador,
+          numeroDocumento: res.data.numeroDocumentoIngresado || documento,
           nombres: res.data.nombreEmpleado.split(' ')[0] || res.data.nombreEmpleado,
           apellidos: res.data.nombreEmpleado.split(' ').slice(1).join(' ') || '',
           correo: 'personal@laboratorioxyz.com',
@@ -261,11 +287,7 @@ export default function SimuladorAccesoPage() {
 
     } catch (error) {
       // Fallback a lógica local si no hay backend (o si la API falla)
-      await buscarEnLocal(
-        tipoIdentificador === 'DOCUMENTO' ? identificador : '',
-        tipoIdentificador === 'RFID' ? identificador : null,
-        areaSeleccionada
-      );
+      await buscarEnLocal(documento, tarjeta, areaSeleccionada);
     } finally {
       setLoading(false);
     }
@@ -351,43 +373,47 @@ export default function SimuladorAccesoPage() {
 
             <div className="space-y-2">
               <label className="block text-[11px] font-bold text-slate-500/70 uppercase tracking-wider">
-                Método de Identificación
+                Doble Credencial Requerida
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                {['DOCUMENTO', 'RFID'].map((tipo) => (
-                  <button
-                    key={tipo}
-                    type="button"
-                    onClick={() => setTipoIdentificador(tipo as any)}
-                    className={`py-3 text-xs font-bold rounded-xl border transition-all ${
-                      tipoIdentificador === tipo 
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md' 
-                        : 'bg-emerald-50/40 text-slate-500 border-emerald-200/40 hover:border-emerald-600/50'
-                    }`}
-                  >
-                    {tipo === 'DOCUMENTO' ? 'Documento ID' : 'Tarjeta RFID'}
-                  </button>
-                ))}
-              </div>
+              <p className="text-[10px] text-slate-500/60">
+                Por seguridad se exigen documento <strong>y</strong> tarjeta de la misma persona.
+              </p>
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="block text-[11px] font-bold text-slate-500/70 uppercase tracking-wider">
-                  Credencial / Identificador
+                  Número de Documento
                 </label>
-                <span className="text-[10px] font-medium text-slate-500/50">{identificador.length}/20</span>
+                <span className="text-[10px] font-medium text-slate-500/50">{documento.length}/20</span>
               </div>
               <input
                 type="text"
                 required
-                value={identificador}
-                onChange={(e) => setIdentificador(e.target.value)}
-                placeholder={tipoIdentificador === 'DOCUMENTO' ? 'Ej. 10001234 o 1012345678' : 'Ej. RFID-001'}
+                value={documento}
+                onChange={(e) => setDocumento(e.target.value)}
+                placeholder="Ej. 10001234 o 1012345678"
+                className="w-full px-5 py-4 rounded-xl bg-white border border-emerald-200/60 text-slate-800 font-mono text-base focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 transition-all placeholder:text-slate-500/30 shadow-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-bold text-slate-500/70 uppercase tracking-wider">
+                  Código de Tarjeta RFID
+                </label>
+                <span className="text-[10px] font-medium text-slate-500/50">{tarjeta.length}/20</span>
+              </div>
+              <input
+                type="text"
+                required
+                value={tarjeta}
+                onChange={(e) => setTarjeta(e.target.value)}
+                placeholder="Ej. RFID-001 o XYZ123"
                 className="w-full px-5 py-4 rounded-xl bg-white border border-emerald-200/60 text-slate-800 font-mono text-base focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 transition-all placeholder:text-slate-500/30 shadow-xs"
               />
               <p className="text-[10px] text-slate-500/60">
-                💡 Prueba con: <strong>10001234</strong> (Admin), <strong>1012345678</strong> (Carlos Mendoza), o <strong>1087654321</strong> (Revocado).
+                💡 Prueba con documento + tarjeta del mismo empleado registrados en el padrón.
               </p>
             </div>
 
