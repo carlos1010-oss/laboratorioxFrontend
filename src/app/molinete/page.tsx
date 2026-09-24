@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ScanLine, CheckCircle2, XCircle, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { ScanLine, CheckCircle2, XCircle, AlertCircle, ShieldCheck, ArrowLeft, Nfc } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
@@ -60,6 +61,12 @@ export default function MolinetePublicoPage() {
       return;
     }
     setLoading(true);
+    const t0 = Date.now();
+    const terminar = () => {
+      // La animación de escaneo se muestra mínimo 1.4 s aunque el servidor responda antes
+      const espera = Math.max(0, 1400 - (Date.now() - t0));
+      setTimeout(() => setLoading(false), espera);
+    };
     try {
       // Sin Authorization: es el endpoint público del kiosco (F-35)
       const res = await fetch(`${API_BASE}/publico/accesos/molinete`, {
@@ -79,9 +86,10 @@ export default function MolinetePublicoPage() {
       setResultado(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error de conexión con el servidor.');
-    } finally {
-      setLoading(false);
+      terminar();
+      return;
     }
+    terminar();
   };
 
   const colorBox =
@@ -166,9 +174,46 @@ export default function MolinetePublicoPage() {
           </button>
         </form>
 
-        {error && <p className="text-sm text-red-600 font-semibold bg-red-50 border border-red-200 rounded-xl p-4">{error}</p>}
+        {loading && (
+          <div className="rounded-3xl border border-emerald-200 bg-white p-6 text-center shadow-sm">
+            <div className="relative mx-auto h-44 max-w-xs overflow-hidden rounded-2xl bg-slate-900">
+              {/* Esquinas del visor */}
+              <div className="absolute left-3 top-3 h-6 w-6 rounded-tl-lg border-l-4 border-t-4 border-emerald-400" />
+              <div className="absolute right-3 top-3 h-6 w-6 rounded-tr-lg border-r-4 border-t-4 border-emerald-400" />
+              <div className="absolute bottom-3 left-3 h-6 w-6 rounded-bl-lg border-b-4 border-l-4 border-emerald-400" />
+              <div className="absolute bottom-3 right-3 h-6 w-6 rounded-br-lg border-b-4 border-r-4 border-emerald-400" />
+              <Nfc className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 text-slate-600" />
+              {/* Línea láser */}
+              <motion.div
+                className="absolute left-6 right-6 h-0.5 rounded bg-emerald-400 shadow-[0_0_18px_4px_rgba(52,211,153,0.8)]"
+                animate={{ top: ['12%', '82%', '12%'] }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              {/* Resplandor inferior */}
+              <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-emerald-500/20 to-transparent" />
+            </div>
+            <motion.p
+              className="mt-4 font-mono text-xs font-bold tracking-[0.25em] text-emerald-700"
+              animate={{ opacity: [1, 0.4, 1] }}
+              transition={{ duration: 1.2, repeat: Infinity }}
+            >
+              ESCANEANDO CREDENCIAL
+            </motion.p>
+            {/* Barra de progreso */}
+            <div className="mx-auto mt-3 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-100">
+              <motion.div
+                className="h-full rounded-full bg-emerald-500"
+                animate={{ x: ['-100%', '250%'] }}
+                transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
+                style={{ width: '40%' }}
+              />
+            </div>
+          </div>
+        )}
 
-        {resultado && (
+        {error && !loading && <p className="text-sm text-red-600 font-semibold bg-red-50 border border-red-200 rounded-xl p-4">{error}</p>}
+
+        {resultado && !loading && (
           <div className={`rounded-3xl border p-8 text-center ${colorBox}`}>
             {resultado.resultado === 'AUTORIZADO' && <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-emerald-600" />}
             {resultado.resultado === 'DENEGADO' && <XCircle className="w-12 h-12 mx-auto mb-3 text-red-600" />}
