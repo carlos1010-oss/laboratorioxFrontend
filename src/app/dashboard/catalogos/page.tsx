@@ -7,7 +7,7 @@ import { Departamento, AreaRestringida, Empleado } from '@/types';
 import { agregarEmpleado } from '@/lib/personalStore';
 import { useNotifications } from '@/context/NotificationContext';
 import { useAuth } from '@/context/AuthContext';
-import { api } from '@/lib/api';
+import { api, extraerMensajeError } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   Building2,
@@ -43,9 +43,67 @@ const mockAreas: AreaRestringida[] = [
 
 export default function CatalogosPage() {
   const { agregarNotificacion } = useNotifications();
-  const { user } = useAuth();
+  const { hasRole } = useAuth();
+  const esAdmin = hasRole(['ADMINISTRADOR']);
   const [deptos, setDeptos] = useState<Departamento[]>(mockDeptos);
   const [areas, setAreas] = useState<AreaRestringida[]>(mockAreas);
+
+  // Formularios de creación (solo ADMINISTRADOR; el backend rechaza otros roles)
+  const [nuevoDepCodigo, setNuevoDepCodigo] = useState('');
+  const [nuevoDepNombre, setNuevoDepNombre] = useState('');
+  const [nuevoDepDesc, setNuevoDepDesc] = useState('');
+  const [nuevaAreaCodigo, setNuevaAreaCodigo] = useState('');
+  const [nuevaAreaNombre, setNuevaAreaNombre] = useState('');
+  const [nuevaAreaNivel, setNuevaAreaNivel] = useState('MEDIO');
+  const [nuevaAreaDesc, setNuevaAreaDesc] = useState('');
+
+  const handleCrearDepto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nuevoDepCodigo.trim() || !nuevoDepNombre.trim()) {
+      toast.error('Código y nombre del departamento son obligatorios.');
+      return;
+    }
+    try {
+      const res = await api.post('/catalogos/departamentos', {
+        codigo: nuevoDepCodigo.trim(),
+        nombre: nuevoDepNombre.trim(),
+        descripcion: nuevoDepDesc.trim() || undefined,
+      });
+      setDeptos((prev) => [...prev, res.data]);
+      setDeptoId(String(res.data.id));
+      setNuevoDepCodigo('');
+      setNuevoDepNombre('');
+      setNuevoDepDesc('');
+      toast.success('Departamento creado correctamente.');
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible crear el departamento.'));
+    }
+  };
+
+  const handleCrearArea = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nuevaAreaCodigo.trim() || !nuevaAreaNombre.trim()) {
+      toast.error('Código y nombre del área son obligatorios.');
+      return;
+    }
+    try {
+      const res = await api.post('/catalogos/areas-restringidas', {
+        codigo: nuevaAreaCodigo.trim(),
+        nombre: nuevaAreaNombre.trim(),
+        nivelRiesgo: nuevaAreaNivel,
+        descripcion: nuevaAreaDesc.trim() || undefined,
+      });
+      setAreas((prev) => [...prev, res.data]);
+      setAreaId(String(res.data.id));
+      setNuevaAreaCodigo('');
+      setNuevaAreaNombre('');
+      setNuevaAreaNivel('MEDIO');
+      setNuevaAreaDesc('');
+      toast.success('Área restringida creada correctamente.');
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible crear el área.'));
+    }
+  };
 
   // Formulario vinculación y registro de empleado
   const [rfidDoc, setRfidDoc] = useState('');
@@ -238,8 +296,64 @@ export default function CatalogosPage() {
         </p>
       </div>
 
+      {/* Departamentos (unidades organizacionales; las zonas son transversales) */}
+      <div className="bg-white rounded-3xl p-6 border border-emerald-200/40 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b border-emerald-200/20 pb-3">
+          <div className="flex items-center gap-2">
+            <Building2 className="w-5 h-5 text-emerald-600" />
+            <h3 className="font-heading font-bold text-sm text-slate-800">Departamentos</h3>
+          </div>
+          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+            {deptos.filter((d) => d.activo !== false).length} Activos
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          {deptos.map((d) => (
+            <div key={d.id} className="p-4 rounded-2xl bg-slate-50/70 border border-emerald-200/30 space-y-1">
+              <p className="font-bold text-xs text-slate-800">{d.nombre}</p>
+              <p className="text-[11px] text-slate-500/70 leading-relaxed">{d.descripcion || 'Sin descripción'}</p>
+              <p className="text-[10px] text-gray-400 font-mono pt-1">Código: {d.codigo}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Crear departamento (solo ADMINISTRADOR) */}
+        {esAdmin && (
+          <form onSubmit={handleCrearDepto} className="pt-3 border-t border-emerald-200/30 flex flex-col md:flex-row gap-2">
+            <input
+              value={nuevoDepCodigo}
+              onChange={(e) => setNuevoDepCodigo(e.target.value)}
+              placeholder="Código (ej. DEP-CAL)"
+              maxLength={20}
+              className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-600/40 md:w-48"
+            />
+            <input
+              value={nuevoDepNombre}
+              onChange={(e) => setNuevoDepNombre(e.target.value)}
+              placeholder="Nombre del departamento"
+              maxLength={100}
+              className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600/40 md:w-64"
+            />
+            <input
+              value={nuevoDepDesc}
+              onChange={(e) => setNuevoDepDesc(e.target.value)}
+              placeholder="Descripción (opcional)"
+              maxLength={255}
+              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-emerald-200/60 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shrink-0"
+            >
+              Crear
+            </button>
+          </form>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        {/* Áreas Restringidas */}
+        {/* Áreas Restringidas (zonas físicas, transversales a departamentos) */}
         <div className="xl:col-span-5 bg-white rounded-3xl p-6 border border-emerald-200/40 shadow-xs space-y-4">
           <div className="flex items-center justify-between border-b border-emerald-200/20 pb-3">
             <div className="flex items-center gap-2">
@@ -247,7 +361,7 @@ export default function CatalogosPage() {
               <h3 className="font-heading font-bold text-sm text-slate-800">Zonas de Riesgo Biológico</h3>
             </div>
             <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
-              {areas.length} Activas
+              {areas.filter((a) => a.activa !== false).length} Activas
             </span>
           </div>
 
@@ -285,6 +399,54 @@ export default function CatalogosPage() {
               ))}
             </AnimatePresence>
           </div>
+
+          {/* Crear área (solo ADMINISTRADOR; el backend rechaza otros roles) */}
+          {esAdmin && (
+            <form onSubmit={handleCrearArea} className="pt-3 mt-1 border-t border-emerald-200/30 space-y-2">
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Nueva zona restringida</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={nuevaAreaCodigo}
+                  onChange={(e) => setNuevaAreaCodigo(e.target.value)}
+                  placeholder="Código (ej. ZR-LAB02)"
+                  maxLength={20}
+                  className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+                />
+                <select
+                  value={nuevaAreaNivel}
+                  onChange={(e) => setNuevaAreaNivel(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+                >
+                  <option value="BAJO">Riesgo BAJO</option>
+                  <option value="MEDIO">Riesgo MEDIO</option>
+                  <option value="ALTO">Riesgo ALTO</option>
+                  <option value="CRITICO">Riesgo CRÍTICO</option>
+                </select>
+              </div>
+              <input
+                value={nuevaAreaNombre}
+                onChange={(e) => setNuevaAreaNombre(e.target.value)}
+                placeholder="Nombre de la zona"
+                maxLength={100}
+                className="w-full px-3 py-2 rounded-xl border border-emerald-200/60 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+              />
+              <div className="flex gap-2">
+                <input
+                  value={nuevaAreaDesc}
+                  onChange={(e) => setNuevaAreaDesc(e.target.value)}
+                  placeholder="Descripción (opcional)"
+                  maxLength={255}
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-emerald-200/60 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shrink-0"
+                >
+                  Crear
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         {/* Formulario y Vista Previa del Carnet Físico */}
