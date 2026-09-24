@@ -69,8 +69,38 @@ export default function GestionPersonalPage() {
         if (depto) params.departamentoId = depto.id;
       }
       const res = await api.get('/personal/empleados', { params });
-      setEmpleados(res.data.content ?? []);
+      const lista: Empleado[] = res.data.content ?? [];
       setTotalElementos(res.data.totalElements ?? 0);
+      // El empleado del backend no trae sus zonas: se enriquecen con el
+      // listado de autorizaciones (una sola petición) para no mostrar
+      // "Área no asignada" a quien sí tiene permisos (F-21).
+      try {
+        const auts = await api.get('/accesos/autorizaciones');
+        const porEmpleado = new Map<number, string[]>();
+        const todas: Array<{ empleadoId: number; nombreArea?: string; activo: boolean }> =
+          Array.isArray(auts.data) ? auts.data : [];
+        for (const a of todas) {
+          if (a?.activo && a.empleadoId != null && a.nombreArea) {
+            const arr = porEmpleado.get(a.empleadoId) ?? [];
+            arr.push(a.nombreArea);
+            porEmpleado.set(a.empleadoId, arr);
+          }
+        }
+        setEmpleados(
+          lista.map((e) => {
+            const zonas = porEmpleado.get(e.id);
+            return {
+              ...e,
+              areaPrincipalNombre:
+                zonas?.length
+                  ? zonas.slice(0, 2).join(', ') + (zonas.length > 2 ? ` +${zonas.length - 2}` : '')
+                  : undefined,
+            };
+          })
+        );
+      } catch {
+        setEmpleados(lista);
+      }
     } catch (err) {
       toast.error(extraerMensajeError(err, 'No fue posible cargar el padrón de personal.'));
     } finally {
@@ -881,7 +911,7 @@ export default function GestionPersonalPage() {
             <div className="pt-4 text-right shrink-0">
               <button
                 type="button"
-                onClick={() => { setShowPermisosModal(false); cargarEmpleados(); }}
+                onClick={() => setShowPermisosModal(false)}
                 className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition-all cursor-pointer"
               >
                 Cerrar
