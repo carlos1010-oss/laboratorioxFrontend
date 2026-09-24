@@ -73,7 +73,7 @@ export function middleware(request: NextRequest) {
   }
 
   // 5. Redirección limpia de rutas no reconocidas a la raíz
-  const validPublicRoutes = ['/', '/login'];
+  const validPublicRoutes = ['/', '/login', '/molinete'];
   if (!pathname.startsWith('/dashboard') && !validPublicRoutes.includes(pathname)) {
     return NextResponse.redirect(new URL('/', request.url), 307);
   }
