@@ -801,11 +801,11 @@ export default function GestionPersonalPage() {
             </div>
 
             {/* Conceder nueva zona */}
-            <div className="flex gap-2 mb-4 shrink-0">
+            <div className="flex flex-col sm:flex-row gap-2 mb-4 shrink-0">
               <select
                 value={areaAConceder}
                 onChange={(e) => setAreaAConceder(e.target.value)}
-                className="flex-1 px-3 py-2.5 rounded-xl border border-emerald-200/60 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+                className="flex-1 min-w-0 px-3 py-2.5 rounded-xl border border-emerald-200/60 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
               >
                 <option value="">Selecciona una zona para autorizar…</option>
                 {areasReales
