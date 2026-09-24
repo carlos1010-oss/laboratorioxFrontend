@@ -85,6 +85,14 @@ export default function GestionPersonalPage() {
       .catch(() => {});
   }, []);
 
+  // Si el departamento por defecto no existe en el catálogo real, usar el primero real
+  useEffect(() => {
+    if (deptosCatalogo.length > 0 && !deptosCatalogo.some((d) => d.nombre === nuevoDepto)) {
+      setNuevoDepto(deptosCatalogo[0].nombre);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deptosCatalogo]);
+
   // Usuario autenticado (para registrar quién concede autorizaciones, F-21)
   const { user } = useAuth();
 
@@ -1011,9 +1019,18 @@ export default function GestionPersonalPage() {
                     onChange={(e) => handleDeptoChange(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-emerald-200/60 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
                   >
-                    <option value="Producción y Síntesis">Producción y Síntesis</option>
-                    <option value="Control de Calidad">Control de Calidad</option>
-                    <option value="Bioseguridad y Mantenimiento">Bioseguridad y Mantenimiento</option>
+                    {(deptosCatalogo.length > 0
+                      ? deptosCatalogo
+                      : [
+                          { id: 0, nombre: 'Producción y Síntesis' },
+                          { id: 0, nombre: 'Control de Calidad' },
+                          { id: 0, nombre: 'Bioseguridad y Mantenimiento' },
+                        ]
+                    ).map((d) => (
+                      <option key={d.nombre} value={d.nombre}>
+                        {d.nombre}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
