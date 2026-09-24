@@ -50,7 +50,7 @@ export default function SimuladorAccesoPage() {
     perfil?: Empleado;
   } | null>(null);
 
-  const areasDemo = [
+  const areasDemoInicial = [
     { id: '3', nombre: 'Laboratorio de Síntesis Molecular (Área A)' },
     { id: '4', nombre: 'Sala Limpia de Liofilización (Área B)' },
     { id: '5', nombre: 'Almacén Central (Área C)' },
@@ -58,6 +58,21 @@ export default function SimuladorAccesoPage() {
     { id: '1', nombre: 'Laboratorio de Bioseguridad 1' },
     { id: '2', nombre: 'Zona de Empaque 1' },
   ];
+
+  // Áreas reales del backend (antes quemadas: los ids 3-6 no existen en la BD
+  // y validar contra ellos siempre daba "área no encontrada").
+  const [areasDemo, setAreasDemo] = useState(areasDemoInicial);
+
+  useEffect(() => {
+    api.get('/catalogos/areas-restringidas')
+      .then((res) => {
+        if (Array.isArray(res.data) && res.data.length > 0) {
+          setAreasDemo(res.data.map((a: { id: number; nombre: string }) => ({ id: String(a.id), nombre: a.nombre })));
+          setAreaId((prev) => (res.data.some((a: { id: number }) => String(a.id) === prev) ? prev : String(res.data[0].id)));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSimular = async (e: React.FormEvent) => {
     e.preventDefault();

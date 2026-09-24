@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Empleado, EstadoEmpleado, Departamento } from '@/types';
+import { Empleado, EstadoEmpleado, Departamento, AreaRestringida, AutorizacionZona } from '@/types';
 import { useNotifications } from '@/context/NotificationContext';
+import { useAuth } from '@/context/AuthContext';
 import { api, extraerMensajeError } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -83,6 +84,31 @@ export default function GestionPersonalPage() {
       .then((res) => setDeptosCatalogo(Array.isArray(res.data) ? res.data : []))
       .catch(() => {});
   }, []);
+
+  // Usuario autenticado (para registrar quién concede autorizaciones, F-21)
+  const { user } = useAuth();
+
+  // Catálogo real de áreas restringidas (con fallback a mocks si no hay backend).
+  // El kiosco, el registro y los permisos usan esta misma fuente para no mostrar
+  // zonas que no existen en la BD.
+  const [areasReales, setAreasReales] = useState<AreaRestringida[]>([]);
+  useEffect(() => {
+    api.get('/catalogos/areas-restringidas')
+      .then((res) => {
+        if (Array.isArray(res.data) && res.data.length > 0) setAreasReales(res.data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const areasCatalogo: CatalogoAreaLab[] = areasReales.length > 0
+    ? areasReales.map((a) => ({
+        id: a.id,
+        codigo: a.codigo,
+        nombre: a.nombre,
+        deptoAsociado: '',
+        nivelRiesgo: a.nivelRiesgo === 'ALTO' || a.nivelRiesgo === 'MEDIO' ? a.nivelRiesgo : 'BAJO',
+      }))
+    : catalogoLaboratoriosAreas;
 
   useEffect(() => {
     cargarEmpleados();
@@ -244,7 +270,7 @@ export default function GestionPersonalPage() {
 
   const handleDeptoChange = (depto: string) => {
     setNuevoDepto(depto);
-    const primerLabDelDepto = catalogoLaboratoriosAreas.find((l) => l.deptoAsociado === depto);
+    const primerLabDelDepto = areasCatalogo.find((l) => l.deptoAsociado === depto);
     if (primerLabDelDepto) {
       setNuevoLaboratorioPrincipal(primerLabDelDepto.nombre);
       setAreasPermitidas([primerLabDelDepto.nombre]);
@@ -334,6 +360,40 @@ export default function GestionPersonalPage() {
 
       setEmpleadoCreado(creado);
 
+      // F-21: conceder en el backend las zonas elegidas. Antes solo quedaban
+      // en el store local y el molinete las denegaba ("sin autorización").
+      try {
+        const candidatas = Array.from(new Set([
+          nuevoLaboratorioPrincipal,
+          ...(areasPermitidas.length > 0 ? areasPermitidas : [nuevoLaboratorioPrincipal]),
+        ]));
+        if (user?.id == null) {
+          if (candidatas.length > 0) {
+            toast.warning('Empleado creado, pero asigna sus zonas en "Gestionar Permisos" (sin usuario asignador en sesión).');
+          }
+        } else {
+          const noResueltas: string[] = [];
+          for (const nombre of candidatas) {
+            const areaReal = areasReales.find((a) => a.nombre === nombre);
+            if (!areaReal) { noResueltas.push(nombre); continue; }
+            try {
+              await api.post('/accesos/autorizaciones', {
+                empleadoId: res.data.id,
+                areaId: areaReal.id,
+                asignadoPorId: user.id,
+              });
+            } catch {
+              noResueltas.push(nombre);
+            }
+          }
+          if (noResueltas.length > 0) {
+            toast.warning('Empleado creado. Zonas pendientes en "Gestionar Permisos": ' + noResueltas.join(', '));
+          }
+        }
+      } catch {
+        /* No bloquear el alta si falla la concesión; se asigna luego en Permisos */
+      }
+
       // Notificación en el sistema global con auditoría completa
       agregarNotificacion({
         titulo: `👤 Alta de Personal: ${creado.nombres} ${creado.apellidos}`,
@@ -370,8 +430,8 @@ export default function GestionPersonalPage() {
       setNuevoTelefono('');
       setNuevoRfid('');
       setNuevoFotoPerfil('');
-      setAreasPermitidas([catalogoLaboratoriosAreas[0].nombre]);
-      setNuevoLaboratorioPrincipal(catalogoLaboratoriosAreas[0].nombre);
+      setAreasPermitidas([areasCatalogo[0].nombre]);
+      setNuevoLaboratorioPrincipal(areasCatalogo[0].nombre);
       setErroresForm({});
       setShowRegistrarModal(false);
       setShowExitoModal(true);
@@ -456,6 +516,85 @@ export default function GestionPersonalPage() {
     }
   };
 
+  // ---- Autorizaciones de zona reales (F-21). Antes el botón "Gestionar
+  // Permisos" solo abría el cambio de estado y las zonas nunca llegaban al backend.
+  const [showPermisosModal, setShowPermisosModal] = useState(false);
+  const [autorizaciones, setAutorizaciones] = useState<AutorizacionZona[]>([]);
+  const [loadingAutorizaciones, setLoadingAutorizaciones] = useState(false);
+  const [areaAConceder, setAreaAConceder] = useState('');
+
+  const cargarAutorizaciones = async (empleadoId: number) => {
+    setLoadingAutorizaciones(true);
+    try {
+      const res = await api.get(`/accesos/autorizaciones/empleado/${empleadoId}`);
+      setAutorizaciones(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible cargar las autorizaciones de zona.'));
+      setAutorizaciones([]);
+    } finally {
+      setLoadingAutorizaciones(false);
+    }
+  };
+
+  const handleAbrirPermisos = (emp: Empleado) => {
+    setEmpleadoSeleccionado(emp);
+    setAreaAConceder('');
+    setShowPermisosModal(true);
+    cargarAutorizaciones(emp.id);
+  };
+
+  const refrescarAreasEmpleado = (lista: AutorizacionZona[]) => {
+    if (!empleadoSeleccionado) return;
+    const activas = lista.filter((a) => a.activo).map((a) => a.nombreArea || '').filter(Boolean);
+    const etiqueta = activas.length === 0
+      ? undefined
+      : activas.slice(0, 2).join(', ') + (activas.length > 2 ? ` +${activas.length - 2}` : '');
+    setEmpleados((prev) =>
+      prev.map((e) => (e.id === empleadoSeleccionado.id ? { ...e, areaPrincipalNombre: etiqueta } : e))
+    );
+  };
+
+  const handleConcederArea = async () => {
+    if (!empleadoSeleccionado || !areaAConceder) {
+      toast.error('Selecciona una zona para conceder.');
+      return;
+    }
+    if (user?.id == null) {
+      toast.error('No se pudo identificar al usuario que concede (sesión).');
+      return;
+    }
+    try {
+      await api.post('/accesos/autorizaciones', {
+        empleadoId: empleadoSeleccionado.id,
+        areaId: parseInt(areaAConceder, 10),
+        asignadoPorId: user.id,
+      });
+      toast.success('Zona autorizada correctamente.');
+      const res = await api.get(`/accesos/autorizaciones/empleado/${empleadoSeleccionado.id}`);
+      const lista: AutorizacionZona[] = Array.isArray(res.data) ? res.data : [];
+      setAutorizaciones(lista);
+      refrescarAreasEmpleado(lista);
+      setAreaAConceder('');
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible conceder la zona.'));
+    }
+  };
+
+  const handleRevocarArea = async (autorizacionId: number) => {
+    try {
+      await api.patch(`/accesos/autorizaciones/${autorizacionId}/revocar`);
+      toast.success('Autorización revocada.');
+      if (empleadoSeleccionado) {
+        const res = await api.get(`/accesos/autorizaciones/empleado/${empleadoSeleccionado.id}`);
+        const lista: AutorizacionZona[] = Array.isArray(res.data) ? res.data : [];
+        setAutorizaciones(lista);
+        refrescarAreasEmpleado(lista);
+      }
+    } catch (err) {
+      toast.error(extraerMensajeError(err, 'No fue posible revocar la autorización.'));
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -512,7 +651,7 @@ export default function GestionPersonalPage() {
               className="px-3 py-2 rounded-xl border border-emerald-200/60 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/40 max-w-[210px] truncate"
             >
               <option value="TODAS">Todos los Laboratorios/Zonas</option>
-              {catalogoLaboratoriosAreas.map((lab) => (
+                    {areasCatalogo.map((lab) => (
                 <option key={lab.id} value={lab.nombre}>
                   {lab.nombre}
                 </option>
@@ -600,9 +739,17 @@ export default function GestionPersonalPage() {
                 </div>
 
                 {/* Footer Tarjeta: Acciones */}
-                <div className="pt-3 mt-auto border-t border-slate-100 relative z-10 flex justify-end">
+                <div className="pt-3 mt-auto border-t border-slate-100 relative z-10 flex justify-end gap-2">
                   <button
                     onClick={() => handleAbrirCambioEstado(emp)}
+                    title="Cambiar estado del empleado (ACTIVO / INACTIVO / BLOQUEADO)"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-amber-50 text-slate-500 hover:text-amber-700 font-bold text-[11px] transition-all cursor-pointer shadow-sm border border-slate-200 hover:border-amber-200"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    Estado
+                  </button>
+                  <button
+                    onClick={() => handleAbrirPermisos(emp)}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-bold text-[11px] transition-all cursor-pointer shadow-sm border border-slate-200 hover:border-emerald-200 group/btn"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-500 group-hover/btn:-rotate-12 transition-transform" />
@@ -625,6 +772,116 @@ export default function GestionPersonalPage() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* MODAL: PERMISOS DE ZONA REALES (F-21) */}
+      {showPermisosModal && empleadoSeleccionado && (
+        <div className="fixed inset-0 bg-slate-800/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+          <div className="bg-white max-w-lg w-full rounded-3xl p-6 shadow-2xl border border-emerald-200/40 animate-slide-down my-auto relative max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between gap-3 mb-4 border-b border-emerald-200/30 pb-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-emerald-50 text-emerald-600">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-heading font-bold text-slate-800">
+                    Permisos de zona — {empleadoSeleccionado.nombres} {empleadoSeleccionado.apellidos}
+                  </h3>
+                  <p className="text-xs text-slate-500/70">
+                    {empleadoSeleccionado.tipoDocumento} {empleadoSeleccionado.numeroDocumento} · Autorizaciones reales del backend (F-21)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPermisosModal(false)}
+                className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Conceder nueva zona */}
+            <div className="flex gap-2 mb-4 shrink-0">
+              <select
+                value={areaAConceder}
+                onChange={(e) => setAreaAConceder(e.target.value)}
+                className="flex-1 px-3 py-2.5 rounded-xl border border-emerald-200/60 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
+              >
+                <option value="">Selecciona una zona para autorizar…</option>
+                {areasReales
+                  .filter((a) => !autorizaciones.some((x) => x.activo && x.areaId === a.id))
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      [{a.codigo}] {a.nombre}
+                    </option>
+                  ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleConcederArea}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shrink-0"
+              >
+                Autorizar
+              </button>
+            </div>
+            {areasReales.length === 0 && (
+              <p className="text-[11px] text-amber-600 font-semibold mb-3">
+                Sin conexión con el catálogo del backend: no se pueden conceder zonas hasta recargar.
+              </p>
+            )}
+
+            {/* Listado de autorizaciones */}
+            <div className="space-y-2 overflow-y-auto pr-1">
+              {loadingAutorizaciones ? (
+                <p className="text-xs text-slate-500 text-center py-6">Cargando autorizaciones…</p>
+              ) : autorizaciones.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-6">
+                  Sin zonas asignadas — el molinete denegará todos sus ingresos.
+                </p>
+              ) : (
+                autorizaciones.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`flex items-center justify-between gap-3 p-3 rounded-2xl border text-xs ${
+                      a.activo ? 'bg-emerald-50/60 border-emerald-200/60' : 'bg-slate-50 border-slate-200 opacity-70'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-800 truncate">{a.nombreArea || `Zona #${a.areaId}`}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {a.activo ? 'ACTIVA' : 'REVOCADA'}
+                        {a.asignadoPorUsuario ? ` · por ${a.asignadoPorUsuario}` : ''}
+                        {a.fechaAsignacion ? ` · ${new Date(a.fechaAsignacion).toLocaleDateString()}` : ''}
+                      </p>
+                    </div>
+                    {a.activo ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRevocarArea(a.id)}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-600 font-bold text-[10px] hover:bg-red-50 transition-all cursor-pointer shrink-0"
+                      >
+                        Revocar
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400 shrink-0">Sin acceso</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 text-right shrink-0">
+              <button
+                type="button"
+                onClick={() => { setShowPermisosModal(false); cargarEmpleados(); }}
+                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition-all cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL 1: REGISTRAR NUEVO EMPLEADO CON REGLAS DE VALIDACIÓN */}
       {showRegistrarModal && (
@@ -795,7 +1052,7 @@ export default function GestionPersonalPage() {
                     }}
                     className="w-full px-3 py-2.5 rounded-xl border border-emerald-200/60 text-xs bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/40"
                   >
-                    {catalogoLaboratoriosAreas.map((lab) => (
+              {areasCatalogo.map((lab) => (
                       <option key={lab.id} value={lab.nombre}>
                         [{lab.codigo}] {lab.nombre} — (Riesgo {lab.nivelRiesgo})
                       </option>
@@ -812,7 +1069,7 @@ export default function GestionPersonalPage() {
                     Zonas y Laboratorios con Acceso Autorizado (RFID)
                   </label>
                   <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/40">
-                    {areasPermitidas.length} de {catalogoLaboratoriosAreas.length} seleccionada(s)
+                    {areasPermitidas.length} de {areasCatalogo.length} seleccionada(s)
                   </span>
                 </div>
 
@@ -851,7 +1108,7 @@ export default function GestionPersonalPage() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setAreasPermitidas(catalogoLaboratoriosAreas.map((l) => l.nombre))}
+                            onClick={() => setAreasPermitidas(areasCatalogo.map((l) => l.nombre))}
                             className="text-[10px] text-emerald-600 hover:underline font-semibold cursor-pointer"
                           >
                             Marcar Todas
@@ -869,7 +1126,7 @@ export default function GestionPersonalPage() {
 
                       {/* Lista de opciones scrolleable */}
                       <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
-                        {catalogoLaboratoriosAreas.map((area) => {
+                        {areasCatalogo.map((area) => {
                           const isChecked = areasPermitidas.includes(area.nombre);
                           const isPrincipal = nuevoLaboratorioPrincipal === area.nombre;
                           return (

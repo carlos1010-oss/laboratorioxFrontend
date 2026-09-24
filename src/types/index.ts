@@ -110,6 +110,18 @@ export interface HistorialAcceso {
   userAgent?: string;
 }
 
+// GET /api/accesos/autorizaciones/empleado/{empleadoId}  (AutorizacionResponseDTO, F-21)
+export interface AutorizacionZona {
+  id: number;
+  empleadoId: number;
+  nombreEmpleado?: string;
+  areaId: number;
+  nombreArea?: string;
+  asignadoPorUsuario?: string;
+  activo: boolean;
+  fechaAsignacion?: string;
+}
+
 // GET /api/auditoria  (AuditoriaResponseDTO)
 export interface BitacoraAuditoria {
   id: string;

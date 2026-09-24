@@ -2,10 +2,11 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Departamento, AreaRestringida, Empleado } from '@/types';
 import { agregarEmpleado } from '@/lib/personalStore';
 import { useNotifications } from '@/context/NotificationContext';
+import { useAuth } from '@/context/AuthContext';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -42,8 +43,9 @@ const mockAreas: AreaRestringida[] = [
 
 export default function CatalogosPage() {
   const { agregarNotificacion } = useNotifications();
-  const [deptos] = useState<Departamento[]>(mockDeptos);
-  const [areas] = useState<AreaRestringida[]>(mockAreas);
+  const { user } = useAuth();
+  const [deptos, setDeptos] = useState<Departamento[]>(mockDeptos);
+  const [areas, setAreas] = useState<AreaRestringida[]>(mockAreas);
 
   // Formulario vinculación y registro de empleado
   const [rfidDoc, setRfidDoc] = useState('');
@@ -53,6 +55,23 @@ export default function CatalogosPage() {
   const [rfidCodigo, setRfidCodigo] = useState('');
   const [deptoId, setDeptoId] = useState('1');
   const [areaId, setAreaId] = useState('1');
+
+  // Catálogos reales del backend con fallback a mocks. Antes la página siempre
+  // mostraba mocks, por eso el admin veía zonas distintas al kiosco.
+  useEffect(() => {
+    api.get('/catalogos/departamentos').then((res) => {
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        setDeptos(res.data);
+        setDeptoId((prev) => (res.data.some((d: Departamento) => String(d.id) === prev) ? prev : String(res.data[0].id)));
+      }
+    }).catch(() => {});
+    api.get('/catalogos/areas-restringidas').then((res) => {
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        setAreas(res.data);
+        setAreaId((prev) => (res.data.some((a: AreaRestringida) => String(a.id) === prev) ? prev : String(res.data[0].id)));
+      }
+    }).catch(() => {});
+  }, []);
   
   const [fotoUrl, setFotoUrl] = useState<string | null>(null);
   const [fotoNombre, setFotoNombre] = useState('');
@@ -91,7 +110,7 @@ export default function CatalogosPage() {
     }
   };
 
-  const handleRegistrarYVincular = (e: React.FormEvent) => {
+  const handleRegistrarYVincular = async (e: React.FormEvent) => {
     e.preventDefault();
     const doc = rfidDoc.trim();
     const code = rfidCodigo.trim();
@@ -133,17 +152,32 @@ export default function CatalogosPage() {
       agregarEmpleado(nuevoEmpleado);
       toast.success(`Personal ${nombres} registrado y carnet ${code} vinculado.`);
 
-      // Intento de persistencia en Backend
-      api.post('/personal/empleados', {
-        tipoDocumento: nuevoEmpleado.tipoDocumento,
-        numeroDocumento: nuevoEmpleado.numeroDocumento,
-        nombres: nuevoEmpleado.nombres,
-        apellidos: nuevoEmpleado.apellidos,
-        correo: nuevoEmpleado.correo,
-        departamentoId: nuevoEmpleado.departamentoId,
-        codigoTarjetaRfid: nuevoEmpleado.codigoTarjetaRfid,
-        estado: 'ACTIVO',
-      }).catch(() => {});
+      // Persistencia en Backend + autorización real de la zona elegida (F-21).
+      // Antes el área solo quedaba en el store local y el molinete la denegaba.
+      try {
+        const res = await api.post('/personal/empleados', {
+          tipoDocumento: nuevoEmpleado.tipoDocumento,
+          numeroDocumento: nuevoEmpleado.numeroDocumento,
+          nombres: nuevoEmpleado.nombres,
+          apellidos: nuevoEmpleado.apellidos,
+          correo: nuevoEmpleado.correo,
+          departamentoId: nuevoEmpleado.departamentoId,
+          codigoTarjetaRfid: nuevoEmpleado.codigoTarjetaRfid,
+          estado: 'ACTIVO',
+        });
+        const empleadoId = res.data?.id;
+        if (empleadoId != null && user?.id != null) {
+          await api.post('/accesos/autorizaciones', {
+            empleadoId,
+            areaId: parseInt(areaId, 10),
+            asignadoPorId: user.id,
+          });
+        } else if (empleadoId != null) {
+          toast.warning('Empleado creado. Asigna su zona en Personal → Gestionar Permisos.');
+        }
+      } catch {
+        toast.warning('Empleado guardado local. El backend no respondió: verifica e intenta de nuevo.');
+      }
 
       // Notificación persistente con desglose de auditoría
       agregarNotificacion({
