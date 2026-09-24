@@ -29,6 +29,8 @@ import {
   ChevronUp,
   SlidersHorizontal,
   Mail,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 export interface CatalogoAreaLab {
@@ -151,6 +153,19 @@ export default function GestionPersonalPage() {
   useEffect(() => {
     cargarEmpleados();
   }, [cargarEmpleados]);
+
+  // Códigos RFID enmascarados por defecto: el código completo es visible en
+  // paneles y permitiría clonar la tarjeta. Solo se revela bajo confirmación.
+  const [rfidReveladas, setRfidReveladas] = useState<Record<number, boolean>>({});
+
+  const toggleRevelarRfid = (empleadoId: number) => {
+    if (!rfidReveladas[empleadoId]) {
+      if (!window.confirm('Vas a mostrar el código RFID completo. Hazlo solo si necesitas enrolar la tarjeta física. ¿Continuar?')) {
+        return;
+      }
+    }
+    setRfidReveladas((prev) => ({ ...prev, [empleadoId]: !prev[empleadoId] }));
+  };
 
   // Modales
   const [showRegistrarModal, setShowRegistrarModal] = useState(false);
@@ -294,6 +309,14 @@ export default function GestionPersonalPage() {
         });
       }
     }
+  };
+
+  // Enmascara el código RFID mostrando solo los últimos 4 caracteres.
+  const enmascararRfid = (codigo?: string): string => {
+    if (!codigo) return '';
+    const limpio = codigo.trim();
+    if (limpio.length <= 4) return '••••';
+    return `••••-${limpio.slice(-4)}`;
   };
 
   const handleToggleArea = (areaNombre: string) => {
@@ -769,9 +792,21 @@ export default function GestionPersonalPage() {
                     </div>
                     <div className="flex items-center gap-1.5 p-1.5 bg-slate-50/50 rounded-lg border border-slate-100">
                       <CreditCard className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      <span className="font-mono font-bold text-slate-600">
-                        {emp.codigoTarjetaRfid || 'SIN_VINCULAR'}
+                      <span className="font-mono font-bold text-slate-600 truncate" title="Código RFID enmascarado por seguridad">
+                        {rfidReveladas[emp.id]
+                          ? emp.codigoTarjetaRfid || 'SIN_VINCULAR'
+                          : enmascararRfid(emp.codigoTarjetaRfid) || 'SIN_VINCULAR'}
                       </span>
+                      {emp.codigoTarjetaRfid && (
+                        <button
+                          type="button"
+                          onClick={() => toggleRevelarRfid(emp.id)}
+                          title={rfidReveladas[emp.id] ? 'Ocultar código' : 'Revelar código (solo para enrolar la tarjeta física)'}
+                          className="p-1 rounded-md hover:bg-emerald-100 text-slate-400 hover:text-emerald-700 transition-all cursor-pointer shrink-0"
+                        >
+                          {rfidReveladas[emp.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

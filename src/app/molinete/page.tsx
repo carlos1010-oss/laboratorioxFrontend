@@ -24,8 +24,11 @@ interface ResultadoPublico {
 }
 
 export default function MolinetePublicoPage() {
-  const [tipo, setTipo] = useState<'DOCUMENTO' | 'RFID'>('DOCUMENTO');
-  const [identificador, setIdentificador] = useState('');
+  // Doble factor: el kiosco exige documento Y tarjeta de la misma persona.
+  // La cédula sola es pública/adivinable y el código de tarjeta es visible
+  // en paneles internos; ninguno basta por separado.
+  const [documento, setDocumento] = useState('');
+  const [tarjeta, setTarjeta] = useState('');
   const [areas, setAreas] = useState<AreaPublica[]>([]);
   const [areaId, setAreaId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -48,8 +51,8 @@ export default function MolinetePublicoPage() {
     e.preventDefault();
     setError(null);
     setResultado(null);
-    if (!identificador.trim()) {
-      setError('Ingresa tu documento o tarjeta.');
+    if (!documento.trim() || !tarjeta.trim()) {
+      setError('Ingresa tu número de documento y el código de tu tarjeta.');
       return;
     }
     if (!areaId) {
@@ -63,8 +66,8 @@ export default function MolinetePublicoPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          numeroDocumento: tipo === 'DOCUMENTO' ? identificador.trim() : undefined,
-          codigoTarjetaRfid: tipo === 'RFID' ? identificador.trim() : undefined,
+          numeroDocumento: documento.trim(),
+          codigoTarjetaRfid: tarjeta.trim(),
           areaId: parseInt(areaId, 10),
         }),
       });
@@ -105,20 +108,9 @@ export default function MolinetePublicoPage() {
 
       <main className="flex-1 max-w-xl w-full mx-auto px-6 py-10 space-y-6">
         <form onSubmit={handleValidar} className="bg-white p-6 rounded-3xl border shadow-sm space-y-5">
-          <div className="grid grid-cols-2 gap-3">
-            {(['DOCUMENTO', 'RFID'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTipo(t)}
-                className={`py-3 text-xs font-bold rounded-xl border transition-all ${
-                  tipo === t ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-500 border-slate-200'
-                }`}
-              >
-                {t === 'DOCUMENTO' ? 'Documento' : 'Tarjeta RFID'}
-              </button>
-            ))}
-          </div>
+          <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            Por seguridad debes presentar tus dos credenciales: documento y tarjeta deben pertenecer a la misma persona.
+          </p>
 
           <div>
             <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Área de destino</label>
@@ -141,12 +133,25 @@ export default function MolinetePublicoPage() {
 
           <div>
             <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-              {tipo === 'DOCUMENTO' ? 'Número de documento' : 'Código de tarjeta'}
+              Número de documento
             </label>
             <input
-              value={identificador}
-              onChange={(e) => setIdentificador(e.target.value)}
-              placeholder={tipo === 'DOCUMENTO' ? 'Ej. 1012345678' : 'Ej. RFID-001'}
+              value={documento}
+              onChange={(e) => setDocumento(e.target.value)}
+              placeholder="Ej. 1012345678"
+              inputMode="numeric"
+              className="w-full px-5 py-4 rounded-xl border font-mono text-base focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+              Código de tarjeta RFID
+            </label>
+            <input
+              value={tarjeta}
+              onChange={(e) => setTarjeta(e.target.value)}
+              placeholder="Ej. XYZ123"
               className="w-full px-5 py-4 rounded-xl border font-mono text-base focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>

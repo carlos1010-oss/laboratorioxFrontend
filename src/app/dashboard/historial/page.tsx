@@ -26,6 +26,14 @@ import {
 } from '@/lib/historialStore';
 
 export default function HistorialAccesosPage() {
+  // Los códigos RFID completos permitirían clonar tarjetas: se muestran
+  // enmascarados en tabla y exportación (los 3 roles ven esta pantalla).
+  const enmascararRfid = (codigo?: string | null): string => {
+    if (!codigo) return '';
+    const limpio = codigo.trim();
+    if (limpio.length <= 4) return '••••';
+    return `••••-${limpio.slice(-4)}`;
+  };
   const [historial, setHistorial] = useState<HistorialAcceso[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState('');
@@ -96,7 +104,7 @@ export default function HistorialAccesosPage() {
 
     let csv = 'ID_UNICO,TIMESTAMP_UTC,DOCUMENTO,CODIGO_RFID,PERSONA,AREA,RESULTADO,MOTIVO_DETALLE\n';
     filtrados.forEach((row) => {
-      csv += `"${row.idHistorial}","${row.fechaHora}","${row.numeroDocumentoIngresado || ''}","${row.codigoTarjetaRfid || ''}","${row.nombreEmpleado || 'NO REGISTRADO'}","${row.nombreArea || ''}","${row.resultado}","${(row.motivo || 'Acceso correcto verificado').replace(/"/g, '""')}"\n`;
+      csv += `"${row.idHistorial}","${row.fechaHora}","${row.numeroDocumentoIngresado || ''}","${enmascararRfid(row.codigoTarjetaRfid)}","${row.nombreEmpleado || 'NO REGISTRADO'}","${row.nombreArea || ''}","${row.resultado}","${(row.motivo || 'Acceso correcto verificado').replace(/"/g, '""')}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -130,7 +138,7 @@ export default function HistorialAccesosPage() {
     filtrados.forEach(item => {
       const rowData = [
         new Date(item.fechaHora).toLocaleString(),
-        item.numeroDocumentoIngresado || item.codigoTarjetaRfid || '-',
+        item.numeroDocumentoIngresado || enmascararRfid(item.codigoTarjetaRfid) || '-',
         item.nombreEmpleado || 'NO REGISTRADO',
         item.nombreArea || '-',
         item.resultado,
@@ -334,8 +342,8 @@ export default function HistorialAccesosPage() {
                       <td className="p-4 whitespace-nowrap">
                         <p className="font-mono font-bold text-slate-800">{item.numeroDocumentoIngresado || '—'}</p>
                         {item.codigoTarjetaRfid && (
-                          <span className="text-[10px] text-emerald-600 font-mono block">
-                            {item.codigoTarjetaRfid}
+                          <span className="text-[10px] text-emerald-600 font-mono block" title="Código RFID enmascarado por seguridad">
+                            {enmascararRfid(item.codigoTarjetaRfid)}
                           </span>
                         )}
                       </td>
